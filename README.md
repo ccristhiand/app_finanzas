@@ -80,9 +80,9 @@ Cada fila (Año, Mes) del Excel se migró concepto por concepto a `movimientos`,
 
 | Categoría asignada | Conceptos |
 |---|---|
-| Ingreso | Sueldo, Grati, Cts, Bono |
-| Gasto | IPHONE LESLIE, Impresora, Laptop, Zapatilla, Veterinaria Coco, Universidad, Gastos Hogar, Gasto Festivo, Matrícula, Servidor Elastika, Youtube, Viajes |
-| Deuda | Deuda a Betza, Pago Visa Signature, Pago MasterCard Black, Pago Cel Interbank, Otros Interbank, Deudas |
-| Inversion | Terreno, Reserva Emergencia, Reserva CTS, Inversiones |
+| Ingreso | Sueldo, freelancer |
+| Gasto | PASAJES, ALIMENTACION, SALUD,DIVERSION|
+| Deuda | PRESTAMO BANCARIO |
+| Inversion | TRADING, ETF |
 
 Los valores nulos o en cero del Excel no generan movimiento (no aportan información). Las columnas calculadas del Excel (`Ingresos Totales`, `TOTALES`, `Efectivo Acumulado`) no se migran porque se recalculan dinámicamente en el dashboard.
