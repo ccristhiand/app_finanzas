@@ -114,16 +114,77 @@
 
       <div class="grid-2">
         <div class="card panel">
-          <h3>Pendiente vs. Pagado</h3>
-          <p class="panel-sub">Comparativo del total de movimientos del mes</p>
-          <div class="versus">
-            <div class="versus-bar">
-              <div class="versus-fill pendiente" id="versusPendienteBar"></div>
-              <div class="versus-fill pagado" id="versusPagadoBar"></div>
+          <h3>Pendiente vs. Pagado por tipo</h3>
+          <p class="panel-sub">Estado de cumplimiento desglosado por categoría</p>
+          <div class="versus-tipos" id="versusTiposContainer">
+
+            <div class="versus-tipo-row">
+              <div class="versus-tipo-label">
+                <span class="badge badge-ingreso">Ingreso</span>
+              </div>
+              <div class="versus-tipo-bars">
+                <div class="versus-mini-bar">
+                  <div class="versus-mini-fill pendiente" id="vpIngresoPend"></div>
+                  <div class="versus-mini-fill pagado"    id="vpIngresoPag"></div>
+                </div>
+                <div class="versus-tipo-vals">
+                  <span class="vt-pend" id="vpIngresoPendVal">S/ 0</span>
+                  <span class="vt-pag"  id="vpIngresoPagVal">S/ 0</span>
+                </div>
+              </div>
             </div>
-            <div class="versus-legend">
-              <div><span class="dot pendiente"></span> Pendiente <strong id="versusPendienteVal">S/ 0.00</strong></div>
-              <div><span class="dot pagado"></span> Pagado <strong id="versusPagadoVal">S/ 0.00</strong></div>
+
+            <div class="versus-tipo-row">
+              <div class="versus-tipo-label">
+                <span class="badge badge-gasto">Gasto</span>
+              </div>
+              <div class="versus-tipo-bars">
+                <div class="versus-mini-bar">
+                  <div class="versus-mini-fill pendiente" id="vpGastoPend"></div>
+                  <div class="versus-mini-fill pagado"    id="vpGastoPag"></div>
+                </div>
+                <div class="versus-tipo-vals">
+                  <span class="vt-pend" id="vpGastoPendVal">S/ 0</span>
+                  <span class="vt-pag"  id="vpGastoPagVal">S/ 0</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="versus-tipo-row">
+              <div class="versus-tipo-label">
+                <span class="badge badge-deuda">Deuda</span>
+              </div>
+              <div class="versus-tipo-bars">
+                <div class="versus-mini-bar">
+                  <div class="versus-mini-fill pendiente" id="vpDeudaPend"></div>
+                  <div class="versus-mini-fill pagado"    id="vpDeudaPag"></div>
+                </div>
+                <div class="versus-tipo-vals">
+                  <span class="vt-pend" id="vpDeudaPendVal">S/ 0</span>
+                  <span class="vt-pag"  id="vpDeudaPagVal">S/ 0</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="versus-tipo-row">
+              <div class="versus-tipo-label">
+                <span class="badge badge-inversion">Inversión</span>
+              </div>
+              <div class="versus-tipo-bars">
+                <div class="versus-mini-bar">
+                  <div class="versus-mini-fill pendiente" id="vpInversionPend"></div>
+                  <div class="versus-mini-fill pagado"    id="vpInversionPag"></div>
+                </div>
+                <div class="versus-tipo-vals">
+                  <span class="vt-pend" id="vpInversionPendVal">S/ 0</span>
+                  <span class="vt-pag"  id="vpInversionPagVal">S/ 0</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="versus-legend-global">
+              <span><span class="dot pendiente"></span>Pendiente</span>
+              <span><span class="dot pagado"></span>Pagado</span>
             </div>
           </div>
         </div>
@@ -160,6 +221,27 @@
               </div>
               <div class="mini-bar"><div class="mini-fill inversion" id="tipoInversionBar"></div></div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card panel panel-acumulados">
+        <h3>Acumulado hasta el periodo</h3>
+        <p class="panel-sub">Total histórico de gastos, deudas e inversiones desde el inicio</p>
+        <div class="acum-grid">
+          <div class="acum-item">
+            <span class="badge badge-gasto">Gasto acumulado</span>
+            <span class="acum-valor gasto" id="acumGasto">S/ 0.00</span>
+          </div>
+          <div class="acum-divider"></div>
+          <div class="acum-item">
+            <span class="badge badge-deuda">Deuda acumulada</span>
+            <span class="acum-valor deuda" id="acumDeuda">S/ 0.00</span>
+          </div>
+          <div class="acum-divider"></div>
+          <div class="acum-item">
+            <span class="badge badge-inversion">Inversión acumulada</span>
+            <span class="acum-valor inversion" id="acumInversion">S/ 0.00</span>
           </div>
         </div>
       </div>
@@ -202,6 +284,9 @@
         </button>
         <button class="mov-header-col col-estado" data-sort="estado">
           Estado <span class="sort-arrow"></span>
+        </button>
+        <button class="mov-header-col col-creado" data-sort="creado_en">
+          Registrado <span class="sort-arrow"></span>
         </button>
         <button class="mov-header-col col-monto" data-sort="monto">
           Monto <span class="sort-arrow"></span>

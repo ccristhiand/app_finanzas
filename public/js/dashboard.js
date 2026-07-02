@@ -134,22 +134,37 @@ function renderResumen(data) {
   tagAcumulado.textContent = data.efectivoAcumulado >= 0 ? 'Hasta el periodo seleccionado' : 'Déficit acumulado';
   tagAcumulado.className = 'kpi-tag ' + (data.efectivoAcumulado >= 0 ? 'success' : 'danger');
 
-  const totalVersus = data.totalPendiente + data.totalPagado || 1;
-  document.getElementById('versusPendienteBar').style.width = `${(data.totalPendiente / totalVersus) * 100}%`;
-  document.getElementById('versusPagadoBar').style.width = `${(data.totalPagado / totalVersus) * 100}%`;
-  document.getElementById('versusPendienteVal').textContent = formatoMoneda(data.totalPendiente);
-  document.getElementById('versusPagadoVal').textContent = formatoMoneda(data.totalPagado);
+  // ── Versus por tipo ──
+  const pend = data.pendientePorTipo || {};
+  const pag  = data.pagadoPorTipo   || {};
+  ['Ingreso','Gasto','Deuda','Inversion'].forEach(tipo => {
+    const p = pend[tipo] || 0;
+    const g = pag[tipo]  || 0;
+    const total = (p + g) || 1;
+    const key = tipo === 'Inversion' ? 'Inversion' : tipo;
+    document.getElementById(`vp${key}Pend`).style.width = `${(p / total) * 100}%`;
+    document.getElementById(`vp${key}Pag`).style.width  = `${(g / total) * 100}%`;
+    document.getElementById(`vp${key}PendVal`).textContent = formatoMonedaCorta(p);
+    document.getElementById(`vp${key}PagVal`).textContent  = formatoMonedaCorta(g);
+  });
 
+  // ── Distribución por tipo ──
   const tipos = data.totalesPorTipo || { Ingreso: 0, Gasto: 0, Deuda: 0, Inversion: 0 };
   const totalTipos = (tipos.Ingreso + tipos.Gasto + tipos.Deuda + tipos.Inversion) || 1;
   document.getElementById('tipoIngresoVal').textContent = formatoMoneda(tipos.Ingreso);
-  document.getElementById('tipoGastoVal').textContent = formatoMoneda(tipos.Gasto);
-  document.getElementById('tipoDeudaVal').textContent = formatoMoneda(tipos.Deuda);
+  document.getElementById('tipoGastoVal').textContent   = formatoMoneda(tipos.Gasto);
+  document.getElementById('tipoDeudaVal').textContent   = formatoMoneda(tipos.Deuda);
   document.getElementById('tipoInversionVal').textContent = formatoMoneda(tipos.Inversion);
-  document.getElementById('tipoIngresoBar').style.width = `${(tipos.Ingreso / totalTipos) * 100}%`;
-  document.getElementById('tipoGastoBar').style.width = `${(tipos.Gasto / totalTipos) * 100}%`;
-  document.getElementById('tipoDeudaBar').style.width = `${(tipos.Deuda / totalTipos) * 100}%`;
+  document.getElementById('tipoIngresoBar').style.width   = `${(tipos.Ingreso   / totalTipos) * 100}%`;
+  document.getElementById('tipoGastoBar').style.width     = `${(tipos.Gasto     / totalTipos) * 100}%`;
+  document.getElementById('tipoDeudaBar').style.width     = `${(tipos.Deuda     / totalTipos) * 100}%`;
   document.getElementById('tipoInversionBar').style.width = `${(tipos.Inversion / totalTipos) * 100}%`;
+
+  // ── Acumulados Gasto / Deuda / Inversión ──
+  const acum = data.acumuladoPorTipo || { Gasto: 0, Deuda: 0, Inversion: 0 };
+  document.getElementById('acumGasto').textContent     = formatoMoneda(acum.Gasto);
+  document.getElementById('acumDeuda').textContent     = formatoMoneda(acum.Deuda);
+  document.getElementById('acumInversion').textContent = formatoMoneda(acum.Inversion);
 }
 
 function renderRecientes() {
@@ -269,34 +284,67 @@ function renderChecklist() {
 
 function filaChecklistHTML(m) {
   const pagado = m.estado === 'pagado';
-  return `
-    <div class="mov-row ${pagado ? 'pagado' : ''}">
-      <div class="mov-checkbox ${pagado ? 'checked' : ''}" data-toggle-id="${m.id}" data-toggle-estado="${pagado ? 'pendiente' : 'pagado'}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg>
-      </div>
+  const signo = m.tipo_movimiento === 'gasto' ? '-' : '+';
+  const montoStr = `${signo} ${formatoMoneda(m.monto)}`;
+  const badgeTipo = `<span class="badge ${m.tipo_registro === 'plan' ? 'badge-plan' : 'badge-generico'}">${m.tipo_registro === 'plan' ? 'Plan' : 'Genérico'}</span>`;
+  const badgeEstado = `<span class="badge ${pagado ? 'badge-pagado' : 'badge-pendiente'}">${pagado ? 'Pagado' : 'Pendiente'}</span>`;
+  const checkbox = `
+    <div class="mov-checkbox ${pagado ? 'checked' : ''}" data-toggle-id="${m.id}" data-toggle-estado="${pagado ? 'pendiente' : 'pagado'}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg>
+    </div>`;
+  const acciones = `
+    <button class="btn-icon" data-edit-id="${m.id}" title="Editar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
+    </button>
+    <button class="btn-icon" data-delete-id="${m.id}" title="Eliminar" style="color:var(--danger)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+    </button>`;
+
+  return `<div class="mov-row ${pagado ? 'pagado' : ''}">
+
+    <!-- ▸ DESKTOP: columnas horizontales -->
+    <div class="mov-desktop">
+      ${checkbox}
       <div class="mov-col-concepto">
         <div class="mov-concepto ${pagado ? 'pagado-text' : ''}">${escapeHtml(m.concepto)}</div>
-        <div class="mov-tag-row">
-          <span class="badge ${m.tipo_registro === 'plan' ? 'badge-plan' : 'badge-generico'}">${m.tipo_registro === 'plan' ? 'Plan' : 'Genérico'}</span>
-          <span class="mov-fecha-mobile">${m.categoria_nombre} · ${formatoFecha(m.fecha)}</span>
-        </div>
+        <div class="mov-tag-row">${badgeTipo}</div>
       </div>
       <div class="mov-col-categoria">${m.categoria_nombre}</div>
       <div class="mov-col-fecha">${formatoFecha(m.fecha)}</div>
-      <div class="mov-col-estado">
-        <span class="badge ${pagado ? 'badge-pagado' : 'badge-pendiente'}">${pagado ? 'Pagado' : 'Pendiente'}</span>
-      </div>
-      <div class="mov-monto ${m.tipo_movimiento}">${m.tipo_movimiento === 'gasto' ? '-' : '+'} ${formatoMoneda(m.monto)}</div>
-      <div class="mov-actions">
-        <button class="btn-icon" data-edit-id="${m.id}" title="Editar">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
-        </button>
-        <button class="btn-icon" data-delete-id="${m.id}" title="Eliminar" style="color:var(--danger)">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-        </button>
-      </div>
+      <div class="mov-col-estado">${badgeEstado}</div>
+      <div class="mov-col-creado" title="Fecha de creación">${formatoFechaHora(m.creado_en)}</div>
+      <div class="mov-monto ${m.tipo_movimiento}">${montoStr}</div>
+      <div class="mov-actions">${acciones}</div>
     </div>
-  `;
+
+    <!-- ▸ MOBILE: tarjeta apilada, toda la info visible -->
+    <div class="mov-mobile">
+      <div class="movm-top">
+        ${checkbox}
+        <div class="movm-concepto-wrap">
+          <div class="movm-concepto ${pagado ? 'pagado-text' : ''}">${escapeHtml(m.concepto)}</div>
+          <div class="movm-badges">${badgeTipo} ${badgeEstado}</div>
+        </div>
+        <div class="movm-monto ${m.tipo_movimiento}">${montoStr}</div>
+      </div>
+      <div class="movm-meta">
+        <span class="movm-meta-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+          ${formatoFecha(m.fecha)}
+        </span>
+        <span class="movm-meta-dot">·</span>
+        <span class="movm-meta-item">${m.categoria_nombre}</span>
+        <span class="movm-meta-dot">·</span>
+        <span class="movm-meta-item">${m.tipo_movimiento === 'gasto' ? 'Gasto' : 'Ingreso'}</span>
+      </div>
+      <div class="movm-creado">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        Registrado: ${formatoFechaHora(m.creado_en)}
+      </div>
+      <div class="movm-actions">${acciones}</div>
+    </div>
+
+  </div>`;
 }
 
 async function toggleEstado(id, nuevoEstado) {
@@ -446,6 +494,20 @@ function initSocket() {
 function formatoFecha(fecha) {
   const [y, m, d] = fecha.split('-');
   return `${d}/${m}/${y}`;
+}
+
+function formatoFechaHora(fechaStr) {
+  if (!fechaStr) return '—';
+  const d = new Date(fechaStr);
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Formato compacto para valores en las barras (ej: S/ 1.2k)
+function formatoMonedaCorta(valor) {
+  const n = Number(valor || 0);
+  if (n >= 1000) return `S/ ${(n/1000).toFixed(1)}k`;
+  return `S/ ${n.toFixed(0)}`;
 }
 
 function escapeHtml(str) {

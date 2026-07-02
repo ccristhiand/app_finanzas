@@ -232,15 +232,23 @@ async function resumenDashboard(req, res) {
     let registrosPagados = 0;
     const totalesPorTipo = { Ingreso: 0, Gasto: 0, Deuda: 0, Inversion: 0 };
 
+    // Pendiente y pagado desglosados por tipo de categoría
+    const pendientePorTipo = { Ingreso: 0, Gasto: 0, Deuda: 0, Inversion: 0 };
+    const pagadoPorTipo   = { Ingreso: 0, Gasto: 0, Deuda: 0, Inversion: 0 };
+
     for (const r of rows) {
       const monto = parseFloat(r.monto);
       if (r.tipo_movimiento === 'ingreso') totalIngresos += monto;
       if (r.tipo_movimiento === 'gasto') totalGastos += monto;
 
-      if (r.estado === 'pendiente') totalPendiente += monto;
+      if (r.estado === 'pendiente') {
+        totalPendiente += monto;
+        if (pendientePorTipo[r.categoria_tipo] !== undefined) pendientePorTipo[r.categoria_tipo] += monto;
+      }
       if (r.estado === 'pagado') {
         totalPagado += monto;
         registrosPagados += 1;
+        if (pagadoPorTipo[r.categoria_tipo] !== undefined) pagadoPorTipo[r.categoria_tipo] += monto;
       }
 
       if (r.tipo_registro === 'plan') totalPlan += monto;
@@ -255,18 +263,24 @@ async function resumenDashboard(req, res) {
       ? Number(((registrosPagados / registrosTotales) * 100).toFixed(2))
       : 0;
 
-    // Efectivo acumulado: flujo neto (ingresos - gastos) de todos los
-    // movimientos hasta el periodo seleccionado, inclusive.
+    // Efectivo acumulado: flujo neto hasta el periodo seleccionado
     const [acumRows] = await pool.query(
-      `SELECT tipo_movimiento, monto FROM movimientos
-       WHERE usuario_id = ? AND ((anio < ?) OR (anio = ? AND mes <= ?))`,
+      `SELECT m.tipo_movimiento, m.monto, c.tipo AS categoria_tipo
+       FROM movimientos m
+       JOIN categorias c ON c.id = m.categoria_id
+       WHERE m.usuario_id = ? AND ((m.anio < ?) OR (m.anio = ? AND m.mes <= ?))`,
       [usuario_id, anio, anio, mes]
     );
 
     let efectivoAcumulado = 0;
+    const acumPorTipo = { Gasto: 0, Deuda: 0, Inversion: 0 };
+
     for (const r of acumRows) {
       const monto = parseFloat(r.monto);
       efectivoAcumulado += r.tipo_movimiento === 'ingreso' ? monto : -monto;
+      if (acumPorTipo[r.categoria_tipo] !== undefined) {
+        acumPorTipo[r.categoria_tipo] += monto;
+      }
     }
 
     return res.json({
@@ -285,12 +299,29 @@ async function resumenDashboard(req, res) {
         registrosPagados,
         porcentajeCumplimiento,
         totalesPorTipo: {
-          Ingreso: Number(totalesPorTipo.Ingreso.toFixed(2)),
-          Gasto: Number(totalesPorTipo.Gasto.toFixed(2)),
-          Deuda: Number(totalesPorTipo.Deuda.toFixed(2)),
+          Ingreso:   Number(totalesPorTipo.Ingreso.toFixed(2)),
+          Gasto:     Number(totalesPorTipo.Gasto.toFixed(2)),
+          Deuda:     Number(totalesPorTipo.Deuda.toFixed(2)),
           Inversion: Number(totalesPorTipo.Inversion.toFixed(2))
         },
-        efectivoAcumulado: Number(efectivoAcumulado.toFixed(2))
+        pendientePorTipo: {
+          Ingreso:   Number(pendientePorTipo.Ingreso.toFixed(2)),
+          Gasto:     Number(pendientePorTipo.Gasto.toFixed(2)),
+          Deuda:     Number(pendientePorTipo.Deuda.toFixed(2)),
+          Inversion: Number(pendientePorTipo.Inversion.toFixed(2))
+        },
+        pagadoPorTipo: {
+          Ingreso:   Number(pagadoPorTipo.Ingreso.toFixed(2)),
+          Gasto:     Number(pagadoPorTipo.Gasto.toFixed(2)),
+          Deuda:     Number(pagadoPorTipo.Deuda.toFixed(2)),
+          Inversion: Number(pagadoPorTipo.Inversion.toFixed(2))
+        },
+        efectivoAcumulado: Number(efectivoAcumulado.toFixed(2)),
+        acumuladoPorTipo: {
+          Gasto:     Number(acumPorTipo.Gasto.toFixed(2)),
+          Deuda:     Number(acumPorTipo.Deuda.toFixed(2)),
+          Inversion: Number(acumPorTipo.Inversion.toFixed(2))
+        }
       }
     });
   } catch (error) {
