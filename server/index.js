@@ -9,6 +9,7 @@ const { Server } = require('socket.io');
 const authRoutes = require('./routes/auth.routes');
 const movimientosRoutes = require('./routes/movimientos.routes');
 const categoriasRoutes = require('./routes/categorias.routes');
+const detallesRoutes = require('./routes/detalles.routes');
 
 const app = express();
 const server = http.createServer(app);
@@ -39,6 +40,7 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/api/auth', authRoutes);
 app.use('/api/movimientos', movimientosRoutes);
 app.use('/api/categorias', categoriasRoutes);
+app.use('/api/detalles', detallesRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, mensaje: 'API funcionando correctamente' });
@@ -54,7 +56,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3004;
 server.listen(PORT, () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
 });

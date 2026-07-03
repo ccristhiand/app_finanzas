@@ -58,6 +58,44 @@ CREATE TABLE movimientos (
   INDEX idx_estado (estado)
 ) ENGINE=InnoDB;
 
+
+
+-- =========================================================
+-- MIGRACIÓN: Detalle de movimientos
+-- Ejecutar una sola vez sobre la base de datos existente
+-- =========================================================
+
+-- 1) Nueva columna en `movimientos`: indica si el movimiento
+--    ahora se gestiona a través de sus detalles (monto y estado
+--    calculados) o de forma manual (comportamiento actual).
+ALTER TABLE movimientos
+  ADD COLUMN tiene_detalle TINYINT(1) NOT NULL DEFAULT 0 AFTER estado;
+
+-- 2) Tabla de detalles. Cada movimiento (ej. "Pasajes") puede tener
+--    varios registros hijos (ej. "Moto", "Bus", "Bus Regreso"),
+--    cada uno con su propia hora, monto y checkbox de pagado.
+CREATE TABLE IF NOT EXISTS movimiento_detalles (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  movimiento_id INT NOT NULL,
+  concepto VARCHAR(150) NOT NULL,
+  monto DECIMAL(10,2) NOT NULL,
+  fecha DATE NOT NULL,
+  hora TIME NULL,
+  estado ENUM('pendiente','pagado') NOT NULL DEFAULT 'pendiente',
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_detalle_movimiento FOREIGN KEY (movimiento_id)
+    REFERENCES movimientos(id) ON DELETE CASCADE,
+  INDEX idx_detalle_movimiento (movimiento_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Nota: los movimientos ya existentes (inserts_movimientos.sql, etc.)
+-- quedan con tiene_detalle = 0, así que se siguen editando manualmente
+-- (monto/estado desde el modal) tal como hoy. En cuanto un movimiento
+-- reciba su primer detalle, el backend lo marca tiene_detalle = 1 y a
+-- partir de ahí el monto y el estado del encabezado se recalculan
+-- automáticamente a partir de sus detalles.
+
 -- =========================================================
 -- DATOS INICIALES: CATEGORIAS
 -- =========================================================

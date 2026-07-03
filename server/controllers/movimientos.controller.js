@@ -9,7 +9,8 @@ async function listar(req, res) {
   try {
     const { anio, mes, tipo_registro, estado } = req.query;
     let sql = `
-      SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo, c.color AS categoria_color
+      SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo, c.color AS categoria_color,
+        (SELECT COUNT(*) FROM movimiento_detalles d WHERE d.movimiento_id = m.id) AS detalles_count
       FROM movimientos m
       JOIN categorias c ON c.id = m.categoria_id
       WHERE m.usuario_id = ?
@@ -48,7 +49,8 @@ async function obtener(req, res) {
   try {
     const { id } = req.params;
     const [rows] = await pool.query(
-      `SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo
+      `SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo,
+        (SELECT COUNT(*) FROM movimiento_detalles d WHERE d.movimiento_id = m.id) AS detalles_count
        FROM movimientos m JOIN categorias c ON c.id = m.categoria_id
        WHERE m.id = ? AND m.usuario_id = ?`,
       [id, req.usuario.id]
@@ -88,7 +90,8 @@ async function crear(req, res) {
     );
 
     const [rows] = await pool.query(
-      `SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo
+      `SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo,
+        (SELECT COUNT(*) FROM movimiento_detalles d WHERE d.movimiento_id = m.id) AS detalles_count
        FROM movimientos m JOIN categorias c ON c.id = m.categoria_id WHERE m.id = ? AND m.usuario_id = ?`,
       [result.insertId, usuario_id]
     );
@@ -114,23 +117,31 @@ async function actualizar(req, res) {
     } = req.body;
 
     const [existe] = await pool.query(
-      'SELECT id FROM movimientos WHERE id = ? AND usuario_id = ?',
+      'SELECT * FROM movimientos WHERE id = ? AND usuario_id = ?',
       [id, usuario_id]
     );
     if (existe.length === 0) {
       return res.status(404).json({ ok: false, mensaje: 'Movimiento no encontrado' });
     }
 
+    const actual = existe[0];
+
+    // Si el movimiento tiene detalles, el monto y el estado se calculan
+    // automáticamente y no se pueden editar manualmente desde aquí.
+    const montoFinal = actual.tiene_detalle ? actual.monto : monto;
+    const estadoFinal = actual.tiene_detalle ? actual.estado : estado;
+
     await pool.query(
       `UPDATE movimientos SET
         categoria_id = ?, concepto = ?, tipo_movimiento = ?, monto = ?,
         fecha = ?, tipo_registro = ?, estado = ?, descripcion = ?
        WHERE id = ? AND usuario_id = ?`,
-      [categoria_id, concepto, tipo_movimiento, monto, fecha, tipo_registro, estado, descripcion || null, id, usuario_id]
+      [categoria_id, concepto, tipo_movimiento, montoFinal, fecha, tipo_registro, estadoFinal, descripcion || null, id, usuario_id]
     );
 
     const [rows] = await pool.query(
-      `SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo
+      `SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo,
+        (SELECT COUNT(*) FROM movimiento_detalles d WHERE d.movimiento_id = m.id) AS detalles_count
        FROM movimientos m JOIN categorias c ON c.id = m.categoria_id WHERE m.id = ? AND m.usuario_id = ?`,
       [id, usuario_id]
     );
@@ -157,11 +168,18 @@ async function cambiarEstado(req, res) {
     }
 
     const [existe] = await pool.query(
-      'SELECT id FROM movimientos WHERE id = ? AND usuario_id = ?',
+      'SELECT id, tiene_detalle FROM movimientos WHERE id = ? AND usuario_id = ?',
       [id, usuario_id]
     );
     if (existe.length === 0) {
       return res.status(404).json({ ok: false, mensaje: 'Movimiento no encontrado' });
+    }
+
+    if (existe[0].tiene_detalle) {
+      return res.status(400).json({
+        ok: false,
+        mensaje: 'Este movimiento tiene detalles; marca cada detalle como pagado desde el desglose.'
+      });
     }
 
     await pool.query(
@@ -170,7 +188,8 @@ async function cambiarEstado(req, res) {
     );
 
     const [rows] = await pool.query(
-      `SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo
+      `SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo,
+        (SELECT COUNT(*) FROM movimiento_detalles d WHERE d.movimiento_id = m.id) AS detalles_count
        FROM movimientos m JOIN categorias c ON c.id = m.categoria_id WHERE m.id = ? AND m.usuario_id = ?`,
       [id, usuario_id]
     );
@@ -186,6 +205,7 @@ async function cambiarEstado(req, res) {
 }
 
 // DELETE /api/movimientos/:id
+// Nota: ON DELETE CASCADE en movimiento_detalles elimina sus detalles automáticamente.
 async function eliminar(req, res) {
   try {
     const { id } = req.params;

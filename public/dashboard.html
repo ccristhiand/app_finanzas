@@ -192,7 +192,7 @@
         <div class="card panel">
           <h3>Distribución por tipo</h3>
           <p class="panel-sub">Ingresos, gastos, deudas e inversiones del mes</p>
-          <div class="tipo-rows" id="tipoRowsContainer">
+          <div class="tipo-rows">
             <div class="tipo-row">
               <div class="tipo-row-top">
                 <span class="badge badge-ingreso">Ingreso</span>
@@ -346,6 +346,9 @@
         <div class="field">
           <label for="fMonto">Monto (S/)</label>
           <input type="number" id="fMonto" step="0.01" min="0" placeholder="0.00" required>
+          <p class="field-note" id="notaMontoCalculado" style="display:none;">
+            Este monto se calcula automáticamente sumando los detalles del movimiento.
+          </p>
         </div>
         <div class="field">
           <label for="fFecha">Fecha</label>
@@ -359,6 +362,9 @@
           <button type="button" class="seg-btn active" data-val="pendiente">Pendiente</button>
           <button type="button" class="seg-btn" data-val="pagado">Pagado</button>
         </div>
+        <p class="field-note" id="notaEstadoCalculado" style="display:none;">
+          El estado se calcula desde el checklist de detalles.
+        </p>
       </div>
 
       <div class="field">
@@ -374,10 +380,62 @@
   </div>
 </div>
 
-<!-- MODAL CONFIRMAR ELIMINAR -->
+<!-- MODAL DETALLE DE MOVIMIENTO -->
+<div class="modal-overlay" id="modalDetalleOverlay">
+  <div class="modal-box card modal-box-sm">
+    <div class="modal-head">
+      <h3 id="modalDetalleTitle">Nuevo detalle</h3>
+      <button class="btn-icon" id="modalDetalleClose">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <form id="detalleForm" class="modal-form">
+      <input type="hidden" id="detalleId">
+      <input type="hidden" id="detalleMovimientoId">
+
+      <div class="field">
+        <label for="dConcepto">Concepto</label>
+        <input type="text" id="dConcepto" placeholder="Ej. Bus ida" required>
+      </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label for="dMonto">Monto (S/)</label>
+          <input type="number" id="dMonto" step="0.01" min="0" placeholder="0.00" required>
+        </div>
+        <div class="field">
+          <label for="dFecha">Fecha</label>
+          <input type="date" id="dFecha" required>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label for="dHora">Hora</label>
+          <input type="time" id="dHora">
+        </div>
+        <div class="field">
+          <label>Estado</label>
+          <div class="seg-control" id="segDetalleEstado">
+            <button type="button" class="seg-btn active" data-val="pendiente">Pendiente</button>
+            <button type="button" class="seg-btn" data-val="pagado">Pagado</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="btnCancelarDetalle">Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="btnGuardarDetalle">Guardar detalle</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- MODAL CONFIRMAR ELIMINAR (se reutiliza para movimiento y para detalle) -->
 <div class="modal-overlay" id="confirmOverlay">
   <div class="modal-box card confirm-box">
-    <h3>¿Eliminar movimiento?</h3>
+    <h3 id="confirmTitle">¿Eliminar movimiento?</h3>
     <p class="panel-sub">Esta acción no se puede deshacer.</p>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="btnCancelarEliminar">Cancelar</button>
