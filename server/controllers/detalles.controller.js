@@ -38,7 +38,11 @@ async function listarPorMovimiento(req, res) {
     }
 
     const [rows] = await pool.query(
-      'SELECT * FROM movimiento_detalles WHERE movimiento_id = ? ORDER BY fecha ASC, hora ASC, id ASC',
+      `SELECT d.*, cd.nombre AS categoria_detalle_nombre, cd.color AS categoria_detalle_color
+       FROM movimiento_detalles d
+       LEFT JOIN categorias_detalle cd ON cd.id = d.categoria_detalle_id
+       WHERE d.movimiento_id = ?
+       ORDER BY d.fecha ASC, d.hora ASC, d.id ASC`,
       [movimientoId]
     );
     return res.json({ ok: true, data: rows });
@@ -53,7 +57,7 @@ async function crear(req, res) {
   try {
     const { movimientoId } = req.params;
     const usuario_id = req.usuario.id;
-    const { concepto, monto, fecha, hora, estado } = req.body;
+    const { concepto, monto, fecha, hora, estado, categoria_detalle_id } = req.body;
 
     if (!concepto || monto === undefined || monto === null || monto === '' || !fecha) {
       return res.status(400).json({ ok: false, mensaje: 'Faltan campos obligatorios' });
@@ -65,12 +69,17 @@ async function crear(req, res) {
     }
 
     const [result] = await pool.query(
-      `INSERT INTO movimiento_detalles (movimiento_id, concepto, monto, fecha, hora, estado)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [movimientoId, concepto, monto, fecha, hora || null, estado || 'pendiente']
+      `INSERT INTO movimiento_detalles (movimiento_id, concepto, monto, fecha, hora, estado, categoria_detalle_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [movimientoId, concepto, monto, fecha, hora || null, estado || 'pendiente', categoria_detalle_id || null]
     );
 
-    const [rows] = await pool.query('SELECT * FROM movimiento_detalles WHERE id = ?', [result.insertId]);
+    const [rows] = await pool.query(
+      `SELECT d.*, cd.nombre AS categoria_detalle_nombre, cd.color AS categoria_detalle_color
+       FROM movimiento_detalles d LEFT JOIN categorias_detalle cd ON cd.id = d.categoria_detalle_id
+       WHERE d.id = ?`,
+      [result.insertId]
+    );
     const nuevoDetalle = rows[0];
 
     const movimientoActualizado = await recalcularMovimiento(movimientoId, usuario_id, getIO(req));
@@ -91,7 +100,7 @@ async function actualizar(req, res) {
   try {
     const { id } = req.params;
     const usuario_id = req.usuario.id;
-    const { concepto, monto, fecha, hora, estado } = req.body;
+    const { concepto, monto, fecha, hora, estado, categoria_detalle_id } = req.body;
 
     const detalleActual = await obtenerDetalleDelUsuario(id, usuario_id);
     if (!detalleActual) {
@@ -103,12 +112,17 @@ async function actualizar(req, res) {
     }
 
     await pool.query(
-      `UPDATE movimiento_detalles SET concepto = ?, monto = ?, fecha = ?, hora = ?, estado = ?
+      `UPDATE movimiento_detalles SET concepto = ?, monto = ?, fecha = ?, hora = ?, estado = ?, categoria_detalle_id = ?
        WHERE id = ?`,
-      [concepto, monto, fecha, hora || null, estado || 'pendiente', id]
+      [concepto, monto, fecha, hora || null, estado || 'pendiente', categoria_detalle_id || null, id]
     );
 
-    const [rows] = await pool.query('SELECT * FROM movimiento_detalles WHERE id = ?', [id]);
+    const [rows] = await pool.query(
+      `SELECT d.*, cd.nombre AS categoria_detalle_nombre, cd.color AS categoria_detalle_color
+       FROM movimiento_detalles d LEFT JOIN categorias_detalle cd ON cd.id = d.categoria_detalle_id
+       WHERE d.id = ?`,
+      [id]
+    );
     const detalleActualizado = rows[0];
 
     const movimientoActualizado = await recalcularMovimiento(
@@ -144,7 +158,12 @@ async function cambiarEstado(req, res) {
 
     await pool.query('UPDATE movimiento_detalles SET estado = ? WHERE id = ?', [estado, id]);
 
-    const [rows] = await pool.query('SELECT * FROM movimiento_detalles WHERE id = ?', [id]);
+    const [rows] = await pool.query(
+      `SELECT d.*, cd.nombre AS categoria_detalle_nombre, cd.color AS categoria_detalle_color
+       FROM movimiento_detalles d LEFT JOIN categorias_detalle cd ON cd.id = d.categoria_detalle_id
+       WHERE d.id = ?`,
+      [id]
+    );
     const detalleActualizado = rows[0];
 
     const movimientoActualizado = await recalcularMovimiento(
@@ -158,6 +177,68 @@ async function cambiarEstado(req, res) {
     return res.json({ ok: true, data: detalleActualizado, movimiento: movimientoActualizado });
   } catch (error) {
     console.error('Error al cambiar estado de detalle:', error);
+    return res.status(500).json({ ok: false, mensaje: 'Error interno del servidor' });
+  }
+}
+
+// PATCH /api/detalles/:id/mover  { movimiento_id: <destinoId> }
+// Mueve un detalle de un movimiento a otro (drag & drop desde el checklist).
+async function mover(req, res) {
+  try {
+    const { id } = req.params;
+    const { movimiento_id: nuevoMovimientoId } = req.body;
+    const usuario_id = req.usuario.id;
+
+    if (!nuevoMovimientoId) {
+      return res.status(400).json({ ok: false, mensaje: 'Falta el movimiento destino' });
+    }
+
+    const detalleActual = await obtenerDetalleDelUsuario(id, usuario_id);
+    if (!detalleActual) {
+      return res.status(404).json({ ok: false, mensaje: 'Detalle no encontrado' });
+    }
+
+    const destinoEsDelUsuario = await verificarPropiedadMovimiento(nuevoMovimientoId, usuario_id);
+    if (!destinoEsDelUsuario) {
+      return res.status(404).json({ ok: false, mensaje: 'Movimiento destino no encontrado' });
+    }
+
+    if (String(detalleActual.movimiento_id) === String(nuevoMovimientoId)) {
+      return res.status(400).json({ ok: false, mensaje: 'El detalle ya pertenece a ese movimiento' });
+    }
+
+    const movimientoOrigenId = detalleActual.movimiento_id;
+    await pool.query('UPDATE movimiento_detalles SET movimiento_id = ? WHERE id = ?', [nuevoMovimientoId, id]);
+
+    const [movimientoOrigen, movimientoDestino] = await Promise.all([
+      recalcularMovimiento(movimientoOrigenId, usuario_id, getIO(req)),
+      recalcularMovimiento(nuevoMovimientoId, usuario_id, getIO(req))
+    ]);
+
+    const [rows] = await pool.query(
+      `SELECT d.*, cd.nombre AS categoria_detalle_nombre, cd.color AS categoria_detalle_color
+       FROM movimiento_detalles d LEFT JOIN categorias_detalle cd ON cd.id = d.categoria_detalle_id
+       WHERE d.id = ?`,
+      [id]
+    );
+    const detalleActualizado = rows[0];
+
+    getIO(req).to(`usuario_${usuario_id}`).emit('detalle:movido', {
+      detalle: detalleActualizado,
+      movimiento_origen_id: movimientoOrigenId,
+      movimiento_destino_id: Number(nuevoMovimientoId),
+      movimientoOrigen,
+      movimientoDestino
+    });
+
+    return res.json({
+      ok: true,
+      data: detalleActualizado,
+      movimientoOrigen,
+      movimientoDestino
+    });
+  } catch (error) {
+    console.error('Error al mover detalle:', error);
     return res.status(500).json({ ok: false, mensaje: 'Error interno del servidor' });
   }
 }
@@ -190,4 +271,4 @@ async function eliminar(req, res) {
   }
 }
 
-module.exports = { listarPorMovimiento, crear, actualizar, cambiarEstado, eliminar };
+module.exports = { listarPorMovimiento, crear, actualizar, cambiarEstado, mover, eliminar };

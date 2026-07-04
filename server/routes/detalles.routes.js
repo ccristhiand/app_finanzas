@@ -10,6 +10,7 @@ router.get('/movimiento/:movimientoId', detallesController.listarPorMovimiento);
 router.post('/movimiento/:movimientoId', detallesController.crear);
 router.put('/:id', detallesController.actualizar);
 router.patch('/:id/estado', detallesController.cambiarEstado);
+router.patch('/:id/mover', detallesController.mover);
 router.delete('/:id', detallesController.eliminar);
 
 module.exports = router;

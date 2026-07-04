@@ -7,6 +7,7 @@ const state = {
   mes: new Date().getMonth() + 1,
   movimientos: [],
   categorias: [],
+  categoriasDetalle: [],
   filtroChecklist: 'todos',
   vista: 'dashboard',
   editandoId: null,
@@ -23,6 +24,7 @@ function init() {
   pintarUsuario();
   poblarSelectoresPeriodo();
   cargarCategorias();
+  cargarCategoriasDetalle();
   cargarMovimientos();
   bindNav();
   bindModal();
@@ -114,6 +116,16 @@ async function cargarCategorias() {
     state.categorias = res.data;
     const select = document.getElementById('fCategoria');
     select.innerHTML = state.categorias.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+  }
+}
+
+async function cargarCategoriasDetalle() {
+  const res = await apiFetch('/categorias-detalle');
+  if (res && res.ok) {
+    state.categoriasDetalle = res.data;
+    const select = document.getElementById('dCategoriaDetalle');
+    select.innerHTML = `<option value="">Sin categoría</option>` +
+      state.categoriasDetalle.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
   }
 }
 
@@ -323,6 +335,8 @@ function renderChecklist() {
   cont.querySelectorAll('[data-delete-detalle]').forEach(el => {
     el.addEventListener('click', () => abrirConfirmacionEliminarDetalle(el.dataset.deleteDetalle));
   });
+
+  bindDragAndDrop(cont);
 }
 
 function iconoChevron(abierto) {
@@ -364,7 +378,7 @@ function filaChecklistHTML(m) {
     </button>`;
 
   return `<div class="mov-row-wrap">
-    <div class="mov-row ${pagado ? 'pagado' : ''}">
+    <div class="mov-row ${pagado ? 'pagado' : ''}" draggable="true" data-movimiento-id="${m.id}" title="Arrastra este movimiento sobre otro para convertirlo en su detalle">
 
       <!-- ▸ DESKTOP: columnas horizontales -->
       <div class="mov-desktop">
@@ -444,13 +458,16 @@ function detallePanelHTML(movimientoId) {
 
 function detalleItemHTML(movimientoId, d) {
   const pagado = d.estado === 'pagado';
-  return `<div class="detalle-item ${pagado ? 'pagado' : ''}">
+  const chipCategoria = d.categoria_detalle_nombre
+    ? `<span class="chip-categoria-detalle" style="background:${d.categoria_detalle_color || '#0F766E'}1A; color:${d.categoria_detalle_color || 'var(--primary-dark)'}">${escapeHtml(d.categoria_detalle_nombre)}</span>`
+    : '';
+  return `<div class="detalle-item ${pagado ? 'pagado' : ''}" draggable="true" data-detalle-id="${d.id}" data-detalle-mov-id="${movimientoId}" title="Arrastra este detalle sobre otro movimiento para moverlo">
     <div class="detalle-check ${pagado ? 'checked' : ''}" data-toggle-detalle="${d.id}" data-toggle-detalle-estado="${pagado ? 'pendiente' : 'pagado'}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg>
     </div>
     <div class="detalle-info">
       <div class="detalle-concepto ${pagado ? 'pagado-text' : ''}">${escapeHtml(d.concepto)}</div>
-      <div class="detalle-meta">${formatoFecha(d.fecha)}${d.hora ? ' · ' + formatoHora(d.hora) : ''}</div>
+      <div class="detalle-meta">${formatoFecha(d.fecha)}${d.hora ? ' · ' + formatoHora(d.hora) : ''}${chipCategoria}</div>
     </div>
     <div class="detalle-monto">${formatoMoneda(d.monto)}</div>
     <div class="detalle-actions">
@@ -500,6 +517,87 @@ async function toggleEstado(id, nuevoEstado) {
     // La actualización visual real llega vía WebSocket
   } else {
     mostrarToast(res?.mensaje || 'No se pudo actualizar el estado', 'error');
+  }
+}
+
+// ---------------- Drag & Drop: mover movimientos/detalles entre sí ----------------
+function bindDragAndDrop(cont) {
+  // ── Filas de movimiento: origen y destino a la vez ──
+  cont.querySelectorAll('.mov-row[data-movimiento-id]').forEach(row => {
+    row.addEventListener('dragstart', (e) => {
+      const payload = { tipo: 'movimiento', id: row.dataset.movimientoId };
+      e.dataTransfer.setData('text/plain', JSON.stringify(payload));
+      e.dataTransfer.effectAllowed = 'move';
+      row.classList.add('dragging');
+    });
+    row.addEventListener('dragend', () => row.classList.remove('dragging'));
+
+    row.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      row.classList.add('drag-over');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+
+    row.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      row.classList.remove('drag-over');
+      const destinoId = row.dataset.movimientoId;
+      const raw = e.dataTransfer.getData('text/plain');
+      if (!raw) return;
+
+      let payload;
+      try { payload = JSON.parse(raw); } catch { return; }
+
+      if (payload.tipo === 'movimiento') {
+        if (String(payload.id) === String(destinoId)) return;
+        await moverMovimientoComoDetalle(payload.id, destinoId);
+      } else if (payload.tipo === 'detalle') {
+        if (String(payload.origenMovimientoId) === String(destinoId)) return;
+        await moverDetalleAOtroMovimiento(payload.id, destinoId);
+      }
+    });
+  });
+
+  // ── Ítems de detalle: solo origen (se sueltan sobre una fila de movimiento) ──
+  cont.querySelectorAll('.detalle-item[data-detalle-id]').forEach(item => {
+    item.addEventListener('dragstart', (e) => {
+      const payload = {
+        tipo: 'detalle',
+        id: item.dataset.detalleId,
+        origenMovimientoId: item.dataset.detalleMovId
+      };
+      e.dataTransfer.setData('text/plain', JSON.stringify(payload));
+      e.dataTransfer.effectAllowed = 'move';
+      e.stopPropagation();
+      item.classList.add('dragging');
+    });
+    item.addEventListener('dragend', (e) => {
+      e.stopPropagation();
+      item.classList.remove('dragging');
+    });
+  });
+}
+
+async function moverMovimientoComoDetalle(movimientoOrigenId, movimientoDestinoId) {
+  const res = await apiFetch(`/movimientos/${movimientoOrigenId}/mover-a/${movimientoDestinoId}`, {
+    method: 'PATCH'
+  });
+  if (res && res.ok) {
+    mostrarToast('Movimiento convertido en detalle', 'success');
+  } else {
+    mostrarToast(res?.mensaje || 'No se pudo mover el movimiento', 'error');
+  }
+}
+
+async function moverDetalleAOtroMovimiento(detalleId, movimientoDestinoId) {
+  const res = await apiFetch(`/detalles/${detalleId}/mover`, {
+    method: 'PATCH',
+    body: JSON.stringify({ movimiento_id: movimientoDestinoId })
+  });
+  if (res && res.ok) {
+    mostrarToast('Detalle movido a otro movimiento', 'success');
+  } else {
+    mostrarToast(res?.mensaje || 'No se pudo mover el detalle', 'error');
   }
 }
 
@@ -676,13 +774,16 @@ function abrirModalDetalle(movimientoId, detalleId = null) {
     document.getElementById('dMonto').value = d.monto;
     document.getElementById('dFecha').value = d.fecha;
     document.getElementById('dHora').value = d.hora ? d.hora.slice(0, 5) : '';
+    document.getElementById('dCategoriaDetalle').value = d.categoria_detalle_id || '';
     setSeg('segDetalleEstado', d.estado);
   } else {
     document.getElementById('modalDetalleTitle').textContent = 'Nuevo detalle';
-    const m = state.movimientos.find(mov => String(mov.id) === String(movimientoId));
-    document.getElementById('dFecha').value = m ? m.fecha : new Date().toISOString().slice(0, 10);
+    // La fecha del detalle es SIEMPRE la fecha actual (el momento en que se
+    // registra el gasto real), no la fecha del movimiento cabecera.
+    document.getElementById('dFecha').value = new Date().toISOString().slice(0, 10);
     const ahora = new Date();
     document.getElementById('dHora').value = `${String(ahora.getHours()).padStart(2, '0')}:${String(ahora.getMinutes()).padStart(2, '0')}`;
+    document.getElementById('dCategoriaDetalle').value = '';
     setSeg('segDetalleEstado', 'pendiente');
   }
 
@@ -697,13 +798,15 @@ async function guardarDetalle(e) {
   e.preventDefault();
   const movimientoId = document.getElementById('detalleMovimientoId').value;
   const detalleId = document.getElementById('detalleId').value;
+  const categoriaDetalleValor = document.getElementById('dCategoriaDetalle').value;
 
   const payload = {
     concepto: document.getElementById('dConcepto').value.trim(),
     monto: Number(document.getElementById('dMonto').value),
     fecha: document.getElementById('dFecha').value,
     hora: document.getElementById('dHora').value || null,
-    estado: valorSeg('segDetalleEstado')
+    estado: valorSeg('segDetalleEstado'),
+    categoria_detalle_id: categoriaDetalleValor ? Number(categoriaDetalleValor) : null
   };
 
   const res = detalleId
@@ -741,11 +844,19 @@ function initSocket() {
   socket.on('movimiento:creado', () => cargarMovimientos());
   socket.on('movimiento:actualizado', () => cargarMovimientos());
   socket.on('movimiento:estado-cambiado', () => cargarMovimientos());
-  socket.on('movimiento:eliminado', () => cargarMovimientos());
+  socket.on('movimiento:eliminado', (payload) => {
+    // Si el movimiento eliminado tenía su panel de detalle abierto (por
+    // haber sido "absorbido" por otro al arrastrarlo), se cierra.
+    if (payload && state.detalleAbiertoId === String(payload.id)) {
+      state.detalleAbiertoId = null;
+    }
+    cargarMovimientos();
+  });
 
   socket.on('detalle:creado', (payload) => sincronizarDesdeDetalle(payload));
   socket.on('detalle:actualizado', (payload) => sincronizarDesdeDetalle(payload));
   socket.on('detalle:eliminado', (payload) => sincronizarDesdeDetalle(payload));
+  socket.on('detalle:movido', (payload) => sincronizarDesdeDetalleMovido(payload));
 }
 
 function sincronizarDesdeDetalle(payload) {
@@ -760,6 +871,17 @@ function sincronizarDesdeDetalle(payload) {
   cargarDetalles(movimientoId).then(() => {
     if (state.vista === 'checklist') renderChecklist();
   });
+}
+
+function sincronizarDesdeDetalleMovido(payload) {
+  const origenId = String(payload.movimiento_origen_id || '');
+  const destinoId = String(payload.movimiento_destino_id || '');
+
+  if (state.detalleAbiertoId === origenId || state.detalleAbiertoId === destinoId) {
+    cargarDetalles(state.detalleAbiertoId).then(() => {
+      if (state.vista === 'checklist') renderChecklist();
+    });
+  }
 }
 
 // ---------------- Utilidades ----------------

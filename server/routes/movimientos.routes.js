@@ -11,6 +11,7 @@ router.get('/:id', movimientosController.obtener);
 router.post('/', movimientosController.crear);
 router.put('/:id', movimientosController.actualizar);
 router.patch('/:id/estado', movimientosController.cambiarEstado);
+router.patch('/:id/mover-a/:destinoId', movimientosController.moverComoDetalle);
 router.delete('/:id', movimientosController.eliminar);
 
 module.exports = router;

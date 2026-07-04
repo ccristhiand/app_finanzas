@@ -97,6 +97,52 @@ CREATE TABLE IF NOT EXISTS movimiento_detalles (
 -- automáticamente a partir de sus detalles.
 
 -- =========================================================
+-- MIGRACIÓN v2: Categorías de detalle + soporte para mover
+-- movimientos/detalles entre sí (drag & drop)
+-- =========================================================
+
+-- 1) Tabla de categorías de DETALLE (independiente de `categorias`,
+--    que sigue siendo Ingreso/Gasto/Deuda/Inversión a nivel de
+--    movimiento). Esta nueva tabla sectoriza el gasto dentro del
+--    desglose: Movilidad, Gastos Hormiga, Servicios, etc.
+CREATE TABLE IF NOT EXISTS categorias_detalle (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nombre VARCHAR(100) NOT NULL UNIQUE,
+  color VARCHAR(20) NOT NULL DEFAULT '#0F766E',
+  creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO categorias_detalle (nombre, color) VALUES
+  ('Movilidad',       '#0F766E'),
+  ('Gastos Hormiga',  '#B66B05'),
+  ('Servicios',       '#3B4FCB'),
+  ('Ingresos',        '#1F9D7C'),
+  ('Ahorro',          '#4B4FCB'),
+  ('Alimentación',    '#E0584A'),
+  ('Salud',           '#0EA5A5'),
+  ('Otros',           '#5C6F6B')
+ON DUPLICATE KEY UPDATE nombre = nombre;
+
+-- 2) Vínculo opcional desde cada detalle hacia su categoría de detalle.
+--    Es NULL-able porque los detalles ya existentes no tienen categoría
+--    asignada todavía (se pueden editar luego desde el front).
+ALTER TABLE movimiento_detalles
+  ADD COLUMN categoria_detalle_id INT NULL AFTER estado,
+  ADD CONSTRAINT fk_detalle_categoria_detalle FOREIGN KEY (categoria_detalle_id)
+    REFERENCES categorias_detalle(id) ON DELETE SET NULL;
+
+-- Nota: no se requiere ninguna migración adicional para la función de
+-- "arrastrar y soltar" (mover movimientos/detalles entre sí); esa
+-- funcionalidad solo usa las tablas ya existentes (movimientos y
+-- movimiento_detalles) a través de los nuevos endpoints del backend.
+
+
+
+
+
+
+
+-- =========================================================
 -- DATOS INICIALES: CATEGORIAS
 -- =========================================================
 INSERT INTO categorias (nombre, tipo, color, icono) VALUES

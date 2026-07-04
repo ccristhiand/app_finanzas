@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { recalcularMovimiento } = require('../services/movimientos.service');
 
 function getIO(req) {
   return req.app.get('io');
@@ -204,6 +205,74 @@ async function cambiarEstado(req, res) {
   }
 }
 
+// PATCH /api/movimientos/:id/mover-a/:destinoId
+// Convierte un movimiento completo en detalle de otro movimiento (drag & drop).
+// - Si el movimiento origen ya tenía sus propios detalles, esos detalles se
+//   re-asignan (re-parentan) al movimiento destino.
+// - Si no tenía detalles, se crea un único detalle en el destino a partir de
+//   los datos del movimiento origen (concepto, monto, fecha, estado).
+// En ambos casos, el movimiento origen se elimina al final.
+async function moverComoDetalle(req, res) {
+  try {
+    const { id, destinoId } = req.params;
+    const usuario_id = req.usuario.id;
+
+    if (String(id) === String(destinoId)) {
+      return res.status(400).json({ ok: false, mensaje: 'El movimiento de origen y destino no pueden ser el mismo' });
+    }
+
+    const [origenRows] = await pool.query(
+      'SELECT * FROM movimientos WHERE id = ? AND usuario_id = ?',
+      [id, usuario_id]
+    );
+    const [destinoRows] = await pool.query(
+      'SELECT id FROM movimientos WHERE id = ? AND usuario_id = ?',
+      [destinoId, usuario_id]
+    );
+
+    if (origenRows.length === 0 || destinoRows.length === 0) {
+      return res.status(404).json({ ok: false, mensaje: 'Movimiento no encontrado' });
+    }
+
+    const movOrigen = origenRows[0];
+
+    const [detallesOrigen] = await pool.query(
+      'SELECT id FROM movimiento_detalles WHERE movimiento_id = ?',
+      [id]
+    );
+
+    if (detallesOrigen.length > 0) {
+      // Re-parenta todos los detalles existentes hacia el destino
+      await pool.query(
+        'UPDATE movimiento_detalles SET movimiento_id = ? WHERE movimiento_id = ?',
+        [destinoId, id]
+      );
+    } else {
+      // El movimiento origen no tenía detalles: se convierte él mismo en uno
+      await pool.query(
+        `INSERT INTO movimiento_detalles (movimiento_id, concepto, monto, fecha, hora, estado)
+         VALUES (?, ?, ?, ?, NULL, ?)`,
+        [destinoId, movOrigen.concepto, movOrigen.monto, movOrigen.fecha, movOrigen.estado]
+      );
+    }
+
+    // El movimiento origen queda vacío (o ya convertido): se elimina
+    await pool.query('DELETE FROM movimientos WHERE id = ? AND usuario_id = ?', [id, usuario_id]);
+
+    const movimientoDestino = await recalcularMovimiento(destinoId, usuario_id, getIO(req));
+    getIO(req).to(`usuario_${usuario_id}`).emit('movimiento:eliminado', { id: Number(id) });
+
+    return res.json({
+      ok: true,
+      mensaje: 'Movimiento movido como detalle correctamente',
+      movimiento: movimientoDestino
+    });
+  } catch (error) {
+    console.error('Error al mover movimiento como detalle:', error);
+    return res.status(500).json({ ok: false, mensaje: 'Error interno del servidor' });
+  }
+}
+
 // DELETE /api/movimientos/:id
 // Nota: ON DELETE CASCADE en movimiento_detalles elimina sus detalles automáticamente.
 async function eliminar(req, res) {
@@ -238,18 +307,35 @@ async function resumenDashboard(req, res) {
     const usuario_id = req.usuario.id;
 
     const [rows] = await pool.query(
-      `SELECT m.tipo_movimiento, m.tipo_registro, m.estado, m.monto, c.tipo AS categoria_tipo
+      `SELECT m.id, m.tiene_detalle, m.tipo_movimiento, m.tipo_registro, m.estado, m.monto, c.tipo AS categoria_tipo
        FROM movimientos m
        JOIN categorias c ON c.id = m.categoria_id
        WHERE m.usuario_id = ? AND m.anio = ? AND m.mes = ?`,
       [usuario_id, anio, mes]
     );
 
+    // Monto ya pagado a nivel de DETALLE, para los movimientos que tienen
+    // desglose. Esto permite que el % de cumplimiento cuente pagos
+    // parciales (ej. 2 de 3 detalles pagados) en vez de exigir que el
+    // movimiento completo esté 100% pagado.
+    const [detalleRows] = await pool.query(
+      `SELECT d.movimiento_id, SUM(CASE WHEN d.estado = 'pagado' THEN d.monto ELSE 0 END) AS pagado
+       FROM movimiento_detalles d
+       JOIN movimientos m ON m.id = d.movimiento_id
+       WHERE m.usuario_id = ? AND m.anio = ? AND m.mes = ?
+       GROUP BY d.movimiento_id`,
+      [usuario_id, anio, mes]
+    );
+    const pagadoDetalleMap = {};
+    detalleRows.forEach(d => { pagadoDetalleMap[d.movimiento_id] = parseFloat(d.pagado); });
+
     let totalIngresos = 0, totalGastos = 0;
     let totalPendiente = 0, totalPagado = 0;
     let totalPlan = 0, totalGenerico = 0;
     let registrosTotales = rows.length;
     let registrosPagados = 0;
+    let montoTotalPeriodo = 0;
+    let montoCumplidoPeriodo = 0;
     const totalesPorTipo = { Ingreso: 0, Gasto: 0, Deuda: 0, Inversion: 0 };
 
     // Pendiente y pagado desglosados por tipo de categoría
@@ -258,8 +344,18 @@ async function resumenDashboard(req, res) {
 
     for (const r of rows) {
       const monto = parseFloat(r.monto);
+      montoTotalPeriodo += monto;
+
       if (r.tipo_movimiento === 'ingreso') totalIngresos += monto;
       if (r.tipo_movimiento === 'gasto') totalGastos += monto;
+
+      // Monto realmente "cumplido" (pagado) para este movimiento:
+      // - Si tiene detalle: lo pagado según sus detalles (puede ser parcial).
+      // - Si no tiene detalle: el monto completo, solo si está marcado pagado.
+      const pagadoReal = r.tiene_detalle
+        ? (pagadoDetalleMap[r.id] || 0)
+        : (r.estado === 'pagado' ? monto : 0);
+      montoCumplidoPeriodo += pagadoReal;
 
       if (r.estado === 'pendiente') {
         totalPendiente += monto;
@@ -279,8 +375,8 @@ async function resumenDashboard(req, res) {
       }
     }
 
-    const porcentajeCumplimiento = registrosTotales > 0
-      ? Number(((registrosPagados / registrosTotales) * 100).toFixed(2))
+    const porcentajeCumplimiento = montoTotalPeriodo > 0
+      ? Number(((montoCumplidoPeriodo / montoTotalPeriodo) * 100).toFixed(2))
       : 0;
 
     // Efectivo acumulado: flujo neto hasta el periodo seleccionado
@@ -351,5 +447,5 @@ async function resumenDashboard(req, res) {
 }
 
 module.exports = {
-  listar, obtener, crear, actualizar, cambiarEstado, eliminar, resumenDashboard
+  listar, obtener, crear, actualizar, cambiarEstado, moverComoDetalle, eliminar, resumenDashboard
 };
