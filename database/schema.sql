@@ -120,6 +120,7 @@ INSERT INTO categorias_detalle (nombre, color) VALUES
   ('Ahorro',          '#4B4FCB'),
   ('Alimentación',    '#E0584A'),
   ('Salud',           '#0EA5A5'),
+  ('Mascotas',       '#F277DA'),
   ('Otros',           '#5C6F6B')
 ON DUPLICATE KEY UPDATE nombre = nombre;
 
