@@ -5,35 +5,82 @@ function getIO(req) {
   return req.app.get('io');
 }
 
+const SELECT_MOVIMIENTO = `
+  SELECT m.*,
+    c.nombre AS categoria_nombre, c.tipo AS categoria_tipo, c.color AS categoria_color,
+    cu.nombre AS cuenta_nombre, cu.color AS cuenta_color,
+    cuo.nombre AS cuenta_origen_nombre, cuo.color AS cuenta_origen_color,
+    cud.nombre AS cuenta_destino_nombre, cud.color AS cuenta_destino_color,
+    (SELECT COUNT(*) FROM movimiento_detalles d WHERE d.movimiento_id = m.id) AS detalles_count
+  FROM movimientos m
+  LEFT JOIN categorias c ON c.id = m.categoria_id
+  LEFT JOIN cuentas cu ON cu.id = m.cuenta_id
+  LEFT JOIN cuentas cuo ON cuo.id = m.cuenta_origen_id
+  LEFT JOIN cuentas cud ON cud.id = m.cuenta_destino_id
+`;
+
+async function cuentasSonDelUsuario(ids, usuario_id) {
+  const idsFiltrados = ids.filter(Boolean);
+  if (idsFiltrados.length === 0) return true;
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS total FROM cuentas WHERE usuario_id = ? AND id IN (${idsFiltrados.map(() => '?').join(',')})`,
+    [usuario_id, ...idsFiltrados]
+  );
+  return rows[0].total === idsFiltrados.length;
+}
+
+// Valida y normaliza los campos según el tipo de movimiento.
+// Devuelve { error } si algo no cuadra, o los valores ya listos para
+// insertar/actualizar si todo está bien.
+async function validarYNormalizar(body, usuario_id) {
+  const { categoria_id, tipo_movimiento, cuenta_id, cuenta_origen_id, cuenta_destino_id } = body;
+
+  if (tipo_movimiento === 'transferencia') {
+    if (!cuenta_origen_id || !cuenta_destino_id) {
+      return { error: 'Selecciona cuenta de origen y cuenta de destino' };
+    }
+    if (String(cuenta_origen_id) === String(cuenta_destino_id)) {
+      return { error: 'La cuenta de origen y destino no pueden ser la misma' };
+    }
+    const cuentasValidas = await cuentasSonDelUsuario([cuenta_origen_id, cuenta_destino_id], usuario_id);
+    if (!cuentasValidas) return { error: 'Cuenta no encontrada' };
+
+    return {
+      categoria_id: null,
+      cuenta_id: null,
+      cuenta_origen_id,
+      cuenta_destino_id
+    };
+  }
+
+  // ingreso / gasto
+  if (!categoria_id) {
+    return { error: 'Selecciona una categoría' };
+  }
+  if (cuenta_id) {
+    const cuentaValida = await cuentasSonDelUsuario([cuenta_id], usuario_id);
+    if (!cuentaValida) return { error: 'Cuenta no encontrada' };
+  }
+
+  return {
+    categoria_id,
+    cuenta_id: cuenta_id || null,
+    cuenta_origen_id: null,
+    cuenta_destino_id: null
+  };
+}
+
 // GET /api/movimientos?anio=2026&mes=6
 async function listar(req, res) {
   try {
     const { anio, mes, tipo_registro, estado } = req.query;
-    let sql = `
-      SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo, c.color AS categoria_color,
-        (SELECT COUNT(*) FROM movimiento_detalles d WHERE d.movimiento_id = m.id) AS detalles_count
-      FROM movimientos m
-      JOIN categorias c ON c.id = m.categoria_id
-      WHERE m.usuario_id = ?
-    `;
+    let sql = `${SELECT_MOVIMIENTO} WHERE m.usuario_id = ?`;
     const params = [req.usuario.id];
 
-    if (anio) {
-      sql += ' AND m.anio = ?';
-      params.push(anio);
-    }
-    if (mes) {
-      sql += ' AND m.mes = ?';
-      params.push(mes);
-    }
-    if (tipo_registro) {
-      sql += ' AND m.tipo_registro = ?';
-      params.push(tipo_registro);
-    }
-    if (estado) {
-      sql += ' AND m.estado = ?';
-      params.push(estado);
-    }
+    if (anio) { sql += ' AND m.anio = ?'; params.push(anio); }
+    if (mes) { sql += ' AND m.mes = ?'; params.push(mes); }
+    if (tipo_registro) { sql += ' AND m.tipo_registro = ?'; params.push(tipo_registro); }
+    if (estado) { sql += ' AND m.estado = ?'; params.push(estado); }
 
     sql += ' ORDER BY m.anio DESC, m.mes DESC, m.fecha DESC, m.id DESC';
 
@@ -50,10 +97,7 @@ async function obtener(req, res) {
   try {
     const { id } = req.params;
     const [rows] = await pool.query(
-      `SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo,
-        (SELECT COUNT(*) FROM movimiento_detalles d WHERE d.movimiento_id = m.id) AS detalles_count
-       FROM movimientos m JOIN categorias c ON c.id = m.categoria_id
-       WHERE m.id = ? AND m.usuario_id = ?`,
+      `${SELECT_MOVIMIENTO} WHERE m.id = ? AND m.usuario_id = ?`,
       [id, req.usuario.id]
     );
     if (rows.length === 0) {
@@ -69,34 +113,31 @@ async function obtener(req, res) {
 // POST /api/movimientos
 async function crear(req, res) {
   try {
-    const {
-      categoria_id, concepto, tipo_movimiento, monto,
-      fecha, tipo_registro, estado, descripcion
-    } = req.body;
+    const { concepto, tipo_movimiento, monto, fecha, tipo_registro, estado, descripcion } = req.body;
+    const usuario_id = req.usuario.id;
 
-    if (!categoria_id || !concepto || !tipo_movimiento || !monto || !fecha) {
+    if (!concepto || !tipo_movimiento || !monto || !fecha) {
       return res.status(400).json({ ok: false, mensaje: 'Faltan campos obligatorios' });
     }
 
-    const usuario_id = req.usuario.id;
+    const normalizado = await validarYNormalizar(req.body, usuario_id);
+    if (normalizado.error) {
+      return res.status(400).json({ ok: false, mensaje: normalizado.error });
+    }
 
     const [result] = await pool.query(
       `INSERT INTO movimientos
-        (usuario_id, categoria_id, concepto, tipo_movimiento, monto, fecha, tipo_registro, estado, descripcion)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (usuario_id, categoria_id, concepto, tipo_movimiento, monto, fecha, tipo_registro, estado, descripcion,
+         cuenta_id, cuenta_origen_id, cuenta_destino_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        usuario_id, categoria_id, concepto, tipo_movimiento, monto, fecha,
-        tipo_registro || 'generico', estado || 'pendiente', descripcion || null
+        usuario_id, normalizado.categoria_id, concepto, tipo_movimiento, monto, fecha,
+        tipo_registro || 'generico', estado || 'pendiente', descripcion || null,
+        normalizado.cuenta_id, normalizado.cuenta_origen_id, normalizado.cuenta_destino_id
       ]
     );
 
-    const [rows] = await pool.query(
-      `SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo,
-        (SELECT COUNT(*) FROM movimiento_detalles d WHERE d.movimiento_id = m.id) AS detalles_count
-       FROM movimientos m JOIN categorias c ON c.id = m.categoria_id WHERE m.id = ? AND m.usuario_id = ?`,
-      [result.insertId, usuario_id]
-    );
-
+    const [rows] = await pool.query(`${SELECT_MOVIMIENTO} WHERE m.id = ? AND m.usuario_id = ?`, [result.insertId, usuario_id]);
     const nuevoMovimiento = rows[0];
     getIO(req).to(`usuario_${usuario_id}`).emit('movimiento:creado', nuevoMovimiento);
 
@@ -112,20 +153,18 @@ async function actualizar(req, res) {
   try {
     const { id } = req.params;
     const usuario_id = req.usuario.id;
-    const {
-      categoria_id, concepto, tipo_movimiento, monto,
-      fecha, tipo_registro, estado, descripcion
-    } = req.body;
+    const { concepto, tipo_movimiento, monto, fecha, tipo_registro, estado, descripcion } = req.body;
 
-    const [existe] = await pool.query(
-      'SELECT * FROM movimientos WHERE id = ? AND usuario_id = ?',
-      [id, usuario_id]
-    );
+    const [existe] = await pool.query('SELECT * FROM movimientos WHERE id = ? AND usuario_id = ?', [id, usuario_id]);
     if (existe.length === 0) {
       return res.status(404).json({ ok: false, mensaje: 'Movimiento no encontrado' });
     }
-
     const actual = existe[0];
+
+    const normalizado = await validarYNormalizar(req.body, usuario_id);
+    if (normalizado.error) {
+      return res.status(400).json({ ok: false, mensaje: normalizado.error });
+    }
 
     // Si el movimiento tiene detalles, el monto y el estado se calculan
     // automáticamente y no se pueden editar manualmente desde aquí.
@@ -135,18 +174,17 @@ async function actualizar(req, res) {
     await pool.query(
       `UPDATE movimientos SET
         categoria_id = ?, concepto = ?, tipo_movimiento = ?, monto = ?,
-        fecha = ?, tipo_registro = ?, estado = ?, descripcion = ?
+        fecha = ?, tipo_registro = ?, estado = ?, descripcion = ?,
+        cuenta_id = ?, cuenta_origen_id = ?, cuenta_destino_id = ?
        WHERE id = ? AND usuario_id = ?`,
-      [categoria_id, concepto, tipo_movimiento, montoFinal, fecha, tipo_registro, estadoFinal, descripcion || null, id, usuario_id]
+      [
+        normalizado.categoria_id, concepto, tipo_movimiento, montoFinal, fecha, tipo_registro, estadoFinal,
+        descripcion || null, normalizado.cuenta_id, normalizado.cuenta_origen_id, normalizado.cuenta_destino_id,
+        id, usuario_id
+      ]
     );
 
-    const [rows] = await pool.query(
-      `SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo,
-        (SELECT COUNT(*) FROM movimiento_detalles d WHERE d.movimiento_id = m.id) AS detalles_count
-       FROM movimientos m JOIN categorias c ON c.id = m.categoria_id WHERE m.id = ? AND m.usuario_id = ?`,
-      [id, usuario_id]
-    );
-
+    const [rows] = await pool.query(`${SELECT_MOVIMIENTO} WHERE m.id = ? AND m.usuario_id = ?`, [id, usuario_id]);
     const actualizado = rows[0];
     getIO(req).to(`usuario_${usuario_id}`).emit('movimiento:actualizado', actualizado);
 
@@ -183,18 +221,9 @@ async function cambiarEstado(req, res) {
       });
     }
 
-    await pool.query(
-      'UPDATE movimientos SET estado = ? WHERE id = ? AND usuario_id = ?',
-      [estado, id, usuario_id]
-    );
+    await pool.query('UPDATE movimientos SET estado = ? WHERE id = ? AND usuario_id = ?', [estado, id, usuario_id]);
 
-    const [rows] = await pool.query(
-      `SELECT m.*, c.nombre AS categoria_nombre, c.tipo AS categoria_tipo,
-        (SELECT COUNT(*) FROM movimiento_detalles d WHERE d.movimiento_id = m.id) AS detalles_count
-       FROM movimientos m JOIN categorias c ON c.id = m.categoria_id WHERE m.id = ? AND m.usuario_id = ?`,
-      [id, usuario_id]
-    );
-
+    const [rows] = await pool.query(`${SELECT_MOVIMIENTO} WHERE m.id = ? AND m.usuario_id = ?`, [id, usuario_id]);
     const actualizado = rows[0];
     getIO(req).to(`usuario_${usuario_id}`).emit('movimiento:estado-cambiado', actualizado);
 
@@ -206,12 +235,10 @@ async function cambiarEstado(req, res) {
 }
 
 // PATCH /api/movimientos/:id/mover-a/:destinoId
-// Convierte un movimiento completo en detalle de otro movimiento (drag & drop).
-// - Si el movimiento origen ya tenía sus propios detalles, esos detalles se
-//   re-asignan (re-parentan) al movimiento destino.
-// - Si no tenía detalles, se crea un único detalle en el destino a partir de
-//   los datos del movimiento origen (concepto, monto, fecha, estado).
-// En ambos casos, el movimiento origen se elimina al final.
+// Convierte un movimiento completo en detalle de otro (drag & drop).
+// Las transferencias no se pueden convertir en detalle: un detalle
+// pertenece al desglose de un ingreso/gasto, no tiene sentido para
+// un movimiento entre cuentas.
 async function moverComoDetalle(req, res) {
   try {
     const { id, destinoId } = req.params;
@@ -221,14 +248,8 @@ async function moverComoDetalle(req, res) {
       return res.status(400).json({ ok: false, mensaje: 'El movimiento de origen y destino no pueden ser el mismo' });
     }
 
-    const [origenRows] = await pool.query(
-      'SELECT * FROM movimientos WHERE id = ? AND usuario_id = ?',
-      [id, usuario_id]
-    );
-    const [destinoRows] = await pool.query(
-      'SELECT id FROM movimientos WHERE id = ? AND usuario_id = ?',
-      [destinoId, usuario_id]
-    );
+    const [origenRows] = await pool.query('SELECT * FROM movimientos WHERE id = ? AND usuario_id = ?', [id, usuario_id]);
+    const [destinoRows] = await pool.query('SELECT id, tipo_movimiento FROM movimientos WHERE id = ? AND usuario_id = ?', [destinoId, usuario_id]);
 
     if (origenRows.length === 0 || destinoRows.length === 0) {
       return res.status(404).json({ ok: false, mensaje: 'Movimiento no encontrado' });
@@ -236,19 +257,15 @@ async function moverComoDetalle(req, res) {
 
     const movOrigen = origenRows[0];
 
-    const [detallesOrigen] = await pool.query(
-      'SELECT id FROM movimiento_detalles WHERE movimiento_id = ?',
-      [id]
-    );
+    if (movOrigen.tipo_movimiento === 'transferencia' || destinoRows[0].tipo_movimiento === 'transferencia') {
+      return res.status(400).json({ ok: false, mensaje: 'Las transferencias no se pueden convertir en detalle' });
+    }
+
+    const [detallesOrigen] = await pool.query('SELECT id FROM movimiento_detalles WHERE movimiento_id = ?', [id]);
 
     if (detallesOrigen.length > 0) {
-      // Re-parenta todos los detalles existentes hacia el destino
-      await pool.query(
-        'UPDATE movimiento_detalles SET movimiento_id = ? WHERE movimiento_id = ?',
-        [destinoId, id]
-      );
+      await pool.query('UPDATE movimiento_detalles SET movimiento_id = ? WHERE movimiento_id = ?', [destinoId, id]);
     } else {
-      // El movimiento origen no tenía detalles: se convierte él mismo en uno
       await pool.query(
         `INSERT INTO movimiento_detalles (movimiento_id, concepto, monto, fecha, hora, estado)
          VALUES (?, ?, ?, ?, NULL, ?)`,
@@ -256,17 +273,12 @@ async function moverComoDetalle(req, res) {
       );
     }
 
-    // El movimiento origen queda vacío (o ya convertido): se elimina
     await pool.query('DELETE FROM movimientos WHERE id = ? AND usuario_id = ?', [id, usuario_id]);
 
     const movimientoDestino = await recalcularMovimiento(destinoId, usuario_id, getIO(req));
     getIO(req).to(`usuario_${usuario_id}`).emit('movimiento:eliminado', { id: Number(id) });
 
-    return res.json({
-      ok: true,
-      mensaje: 'Movimiento movido como detalle correctamente',
-      movimiento: movimientoDestino
-    });
+    return res.json({ ok: true, mensaje: 'Movimiento movido como detalle correctamente', movimiento: movimientoDestino });
   } catch (error) {
     console.error('Error al mover movimiento como detalle:', error);
     return res.status(500).json({ ok: false, mensaje: 'Error interno del servidor' });
@@ -274,22 +286,17 @@ async function moverComoDetalle(req, res) {
 }
 
 // DELETE /api/movimientos/:id
-// Nota: ON DELETE CASCADE en movimiento_detalles elimina sus detalles automáticamente.
 async function eliminar(req, res) {
   try {
     const { id } = req.params;
     const usuario_id = req.usuario.id;
 
-    const [existe] = await pool.query(
-      'SELECT id FROM movimientos WHERE id = ? AND usuario_id = ?',
-      [id, usuario_id]
-    );
+    const [existe] = await pool.query('SELECT id FROM movimientos WHERE id = ? AND usuario_id = ?', [id, usuario_id]);
     if (existe.length === 0) {
       return res.status(404).json({ ok: false, mensaje: 'Movimiento no encontrado' });
     }
 
     await pool.query('DELETE FROM movimientos WHERE id = ? AND usuario_id = ?', [id, usuario_id]);
-
     getIO(req).to(`usuario_${usuario_id}`).emit('movimiento:eliminado', { id: Number(id) });
 
     return res.json({ ok: true, mensaje: 'Movimiento eliminado correctamente' });
@@ -309,15 +316,11 @@ async function resumenDashboard(req, res) {
     const [rows] = await pool.query(
       `SELECT m.id, m.tiene_detalle, m.tipo_movimiento, m.tipo_registro, m.estado, m.monto, c.tipo AS categoria_tipo
        FROM movimientos m
-       JOIN categorias c ON c.id = m.categoria_id
+       LEFT JOIN categorias c ON c.id = m.categoria_id
        WHERE m.usuario_id = ? AND m.anio = ? AND m.mes = ?`,
       [usuario_id, anio, mes]
     );
 
-    // Monto ya pagado a nivel de DETALLE, para los movimientos que tienen
-    // desglose. Esto permite que el % de cumplimiento cuente pagos
-    // parciales (ej. 2 de 3 detalles pagados) en vez de exigir que el
-    // movimiento completo esté 100% pagado.
     const [detalleRows] = await pool.query(
       `SELECT d.movimiento_id, SUM(CASE WHEN d.estado = 'pagado' THEN d.monto ELSE 0 END) AS pagado
        FROM movimiento_detalles d
@@ -337,25 +340,25 @@ async function resumenDashboard(req, res) {
     let montoTotalPeriodo = 0;
     let montoCumplidoPeriodo = 0;
     const totalesPorTipo = { Ingreso: 0, Gasto: 0, Deuda: 0, Inversion: 0 };
-
-    // Pendiente y pagado desglosados por tipo de categoría
     const pendientePorTipo = { Ingreso: 0, Gasto: 0, Deuda: 0, Inversion: 0 };
     const pagadoPorTipo   = { Ingreso: 0, Gasto: 0, Deuda: 0, Inversion: 0 };
 
     for (const r of rows) {
       const monto = parseFloat(r.monto);
-      montoTotalPeriodo += monto;
+      const esTransferencia = r.tipo_movimiento === 'transferencia';
 
       if (r.tipo_movimiento === 'ingreso') totalIngresos += monto;
       if (r.tipo_movimiento === 'gasto') totalGastos += monto;
 
-      // Monto realmente "cumplido" (pagado) para este movimiento:
-      // - Si tiene detalle: lo pagado según sus detalles (puede ser parcial).
-      // - Si no tiene detalle: el monto completo, solo si está marcado pagado.
-      const pagadoReal = r.tiene_detalle
-        ? (pagadoDetalleMap[r.id] || 0)
-        : (r.estado === 'pagado' ? monto : 0);
-      montoCumplidoPeriodo += pagadoReal;
+      // Las transferencias son neutras: no suman ni restan al total del
+      // periodo ni al % de cumplimiento (no representan gasto/ingreso real).
+      if (!esTransferencia) {
+        montoTotalPeriodo += monto;
+        const pagadoReal = r.tiene_detalle
+          ? (pagadoDetalleMap[r.id] || 0)
+          : (r.estado === 'pagado' ? monto : 0);
+        montoCumplidoPeriodo += pagadoReal;
+      }
 
       if (r.estado === 'pendiente') {
         totalPendiente += monto;
@@ -379,11 +382,10 @@ async function resumenDashboard(req, res) {
       ? Number(((montoCumplidoPeriodo / montoTotalPeriodo) * 100).toFixed(2))
       : 0;
 
-    // Efectivo acumulado: flujo neto hasta el periodo seleccionado
     const [acumRows] = await pool.query(
       `SELECT m.tipo_movimiento, m.monto, c.tipo AS categoria_tipo
        FROM movimientos m
-       JOIN categorias c ON c.id = m.categoria_id
+       LEFT JOIN categorias c ON c.id = m.categoria_id
        WHERE m.usuario_id = ? AND ((m.anio < ?) OR (m.anio = ? AND m.mes <= ?))`,
       [usuario_id, anio, anio, mes]
     );
@@ -393,6 +395,9 @@ async function resumenDashboard(req, res) {
 
     for (const r of acumRows) {
       const monto = parseFloat(r.monto);
+      // Las transferencias no afectan el efectivo acumulado total (solo
+      // mueven dinero entre cuentas propias, no lo hacen entrar ni salir).
+      if (r.tipo_movimiento === 'transferencia') continue;
       efectivoAcumulado += r.tipo_movimiento === 'ingreso' ? monto : -monto;
       if (acumPorTipo[r.categoria_tipo] !== undefined) {
         acumPorTipo[r.categoria_tipo] += monto;

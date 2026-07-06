@@ -30,6 +30,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
         <span>Checklist</span>
       </button>
+      <button class="nav-item" data-view="cuentas">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+        <span>Cuentas</span>
+      </button>
     </nav>
 
     <button class="btn btn-primary nuevo-btn" id="btnNuevoSidebar">
@@ -63,6 +67,10 @@
     </button>
     <button class="mnav-item mnav-fab" id="btnNuevoMobile">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" width="22" height="22"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <button class="mnav-item" data-view="cuentas">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+      <span>Cuentas</span>
     </button>
   </nav>
 
@@ -268,6 +276,7 @@
           <button class="filtro-chip" data-filtro="pagado">Pagados</button>
           <button class="filtro-chip" data-filtro="plan">Plan</button>
           <button class="filtro-chip" data-filtro="generico">Genérico</button>
+          <button class="filtro-chip" data-filtro="transferencia">Transferencias</button>
         </div>
       </div>
 
@@ -298,7 +307,74 @@
 
     </section>
 
+    <!-- VISTA: CUENTAS -->
+    <section class="view" id="view-cuentas" style="display:none;">
+
+      <div class="panel-head-row">
+        <div>
+          <h3 style="font-size:18px;">Tus cuentas</h3>
+          <p class="panel-sub">Saldo calculado a partir de tus movimientos pagados</p>
+        </div>
+        <button class="btn btn-primary" id="btnNuevaCuenta">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="15" height="15"><path d="M12 5v14M5 12h14"/></svg>
+          Nueva cuenta
+        </button>
+      </div>
+
+      <div id="cuentasContainer" class="cuentas-grid"></div>
+
+    </section>
+
   </main>
+</div>
+
+<!-- MODAL CUENTA -->
+<div class="modal-overlay" id="modalCuentaOverlay">
+  <div class="modal-box card modal-box-sm">
+    <div class="modal-head">
+      <h3 id="modalCuentaTitle">Nueva cuenta</h3>
+      <button class="btn-icon" id="modalCuentaClose">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <form id="cuentaForm" class="modal-form">
+      <input type="hidden" id="cuentaId">
+
+      <div class="field">
+        <label for="cNombre">Nombre</label>
+        <input type="text" id="cNombre" placeholder="Ej. BCP Ahorros" required>
+      </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label for="cTipo">Tipo</label>
+          <select id="cTipo">
+            <option value="efectivo">Efectivo</option>
+            <option value="ahorros">Cuenta de ahorros</option>
+            <option value="corriente">Cuenta corriente</option>
+            <option value="tarjeta_credito">Tarjeta de crédito</option>
+            <option value="billetera_digital">Billetera digital</option>
+            <option value="otro">Otro</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="cSaldoInicial">Saldo inicial (S/)</label>
+          <input type="number" id="cSaldoInicial" step="0.01" placeholder="0.00" value="0">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="cColor">Color</label>
+        <input type="color" id="cColor" value="#0F766E" style="height:40px; padding:4px; width:100%;">
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="btnCancelarCuenta">Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="btnGuardarCuenta">Guardar cuenta</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <!-- MODAL CRUD -->
@@ -317,9 +393,10 @@
       <div class="form-row">
         <div class="field">
           <label>Tipo de movimiento</label>
-          <div class="seg-control" id="segTipoMovimiento">
+          <div class="seg-control seg-control-3" id="segTipoMovimiento">
             <button type="button" class="seg-btn active" data-val="gasto">Gasto</button>
             <button type="button" class="seg-btn" data-val="ingreso">Ingreso</button>
+            <button type="button" class="seg-btn" data-val="transferencia">Transferencia</button>
           </div>
         </div>
         <div class="field">
@@ -331,14 +408,34 @@
         </div>
       </div>
 
-      <div class="form-row">
-        <div class="field">
-          <label for="fConcepto">Concepto</label>
-          <input type="text" id="fConcepto" placeholder="Ej. Supermercado" required>
-        </div>
+      <div class="field">
+        <label for="fConcepto">Concepto</label>
+        <input type="text" id="fConcepto" placeholder="Ej. Supermercado" required>
+      </div>
+
+      <!-- Ingreso / Gasto: categoría + cuenta afectada -->
+      <div class="form-row" id="bloqueCategoriaCuenta">
         <div class="field">
           <label for="fCategoria">Categoría</label>
-          <select id="fCategoria" required></select>
+          <select id="fCategoria"></select>
+        </div>
+        <div class="field">
+          <label for="fCuenta">Cuenta</label>
+          <select id="fCuenta">
+            <option value="">Sin cuenta</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Transferencia: cuenta origen + cuenta destino -->
+      <div class="form-row" id="bloqueTransferencia" style="display:none;">
+        <div class="field">
+          <label for="fCuentaOrigen">Cuenta origen</label>
+          <select id="fCuentaOrigen"></select>
+        </div>
+        <div class="field">
+          <label for="fCuentaDestino">Cuenta destino</label>
+          <select id="fCuentaDestino"></select>
         </div>
       </div>
 

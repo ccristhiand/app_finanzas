@@ -8,10 +8,10 @@ function getIO(req) {
 
 async function verificarPropiedadMovimiento(movimiento_id, usuario_id) {
   const [rows] = await pool.query(
-    'SELECT id FROM movimientos WHERE id = ? AND usuario_id = ?',
+    'SELECT id, tipo_movimiento FROM movimientos WHERE id = ? AND usuario_id = ?',
     [movimiento_id, usuario_id]
   );
-  return rows.length > 0;
+  return rows.length > 0 ? rows[0] : null;
 }
 
 async function obtenerDetalleDelUsuario(detalle_id, usuario_id) {
@@ -63,9 +63,12 @@ async function crear(req, res) {
       return res.status(400).json({ ok: false, mensaje: 'Faltan campos obligatorios' });
     }
 
-    const esDelUsuario = await verificarPropiedadMovimiento(movimientoId, usuario_id);
-    if (!esDelUsuario) {
+    const movimiento = await verificarPropiedadMovimiento(movimientoId, usuario_id);
+    if (!movimiento) {
       return res.status(404).json({ ok: false, mensaje: 'Movimiento no encontrado' });
+    }
+    if (movimiento.tipo_movimiento === 'transferencia') {
+      return res.status(400).json({ ok: false, mensaje: 'Las transferencias no admiten detalles' });
     }
 
     const [result] = await pool.query(
@@ -198,9 +201,12 @@ async function mover(req, res) {
       return res.status(404).json({ ok: false, mensaje: 'Detalle no encontrado' });
     }
 
-    const destinoEsDelUsuario = await verificarPropiedadMovimiento(nuevoMovimientoId, usuario_id);
-    if (!destinoEsDelUsuario) {
+    const destinoInfo = await verificarPropiedadMovimiento(nuevoMovimientoId, usuario_id);
+    if (!destinoInfo) {
       return res.status(404).json({ ok: false, mensaje: 'Movimiento destino no encontrado' });
+    }
+    if (destinoInfo.tipo_movimiento === 'transferencia') {
+      return res.status(400).json({ ok: false, mensaje: 'Las transferencias no admiten detalles' });
     }
 
     if (String(detalleActual.movimiento_id) === String(nuevoMovimientoId)) {

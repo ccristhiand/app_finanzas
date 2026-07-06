@@ -200,6 +200,7 @@ body { background: var(--bg); }
 .reciente-monto { font-weight: 700; font-family: var(--font-display); white-space: nowrap; }
 .reciente-monto.gasto { color: var(--danger); }
 .reciente-monto.ingreso { color: var(--success); }
+.reciente-monto.transferencia { color: #3B4FCB; }
 .empty-state { text-align: center; padding: 30px 10px; color: var(--ink-soft); font-size: 14px; }
 
 /* ---------------- Checklist ---------------- */
@@ -394,6 +395,7 @@ body { background: var(--bg); }
 .mov-monto { font-family: var(--font-display); font-weight: 700; font-size: 15px; white-space: nowrap; width: 96px; flex-shrink: 0; text-align: right; }
 .mov-monto.gasto { color: var(--danger); }
 .mov-monto.ingreso { color: var(--success); }
+.mov-monto.transferencia { color: #3B4FCB; }
 
 .mov-actions { display: flex; gap: 4px; flex-shrink: 0; width: 144px; justify-content: flex-end; }
 .mov-actions .btn-icon { width: 30px; height: 30px; border-radius: 8px; }
@@ -562,4 +564,73 @@ body { background: var(--bg); }
 
 @media (max-width: 420px) {
   .kpi-grid { grid-template-columns: 1fr 1fr; }
+}
+/* =========================================================
+   CUENTAS Y TRANSFERENCIAS
+   ========================================================= */
+
+.badge-transferencia { background: #E8ECFE; color: #3B4FCB; }
+
+.chip-cuenta {
+  display: inline-flex; align-items: center;
+  padding: 2px 9px; border-radius: 100px;
+  font-size: 11px; font-weight: 600;
+  background: #F0F4F3; color: var(--ink-soft);
+}
+
+.transferencia-cuentas {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 13px; color: var(--ink-soft); font-weight: 500;
+}
+.transferencia-cuentas svg { color: #3B4FCB; flex-shrink: 0; }
+
+.seg-control-3 .seg-btn { font-size: 12px; padding: 8px 4px; }
+
+/* ── Grid de tarjetas de cuenta ── */
+.cuentas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.cuenta-card {
+  padding: 18px;
+  border-top: 3px solid var(--cuenta-color, var(--primary));
+}
+
+.cuenta-card-top {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.cuenta-icon {
+  width: 40px; height: 40px; border-radius: 11px;
+  display: flex; align-items: center; justify-content: center;
+}
+.cuenta-icon svg { width: 19px; height: 19px; }
+
+.cuenta-actions { display: flex; gap: 4px; }
+
+.cuenta-nombre {
+  font-family: var(--font-display); font-weight: 700; font-size: 15.5px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+
+.cuenta-tipo { font-size: 12.5px; color: var(--ink-soft); margin-top: 3px; }
+
+.cuenta-saldo {
+  font-family: var(--font-display); font-weight: 800; font-size: 22px;
+  margin-top: 12px; color: var(--ink);
+}
+.cuenta-saldo.negativo { color: var(--danger); }
+
+@media (max-width: 720px) {
+  .cuentas-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .cuenta-card { padding: 14px; }
+  .cuenta-saldo { font-size: 18px; }
+}
+
+@media (max-width: 420px) {
+  .cuentas-grid { grid-template-columns: 1fr; }
 }

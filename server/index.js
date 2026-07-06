@@ -11,6 +11,7 @@ const movimientosRoutes = require('./routes/movimientos.routes');
 const categoriasRoutes = require('./routes/categorias.routes');
 const detallesRoutes = require('./routes/detalles.routes');
 const categoriasDetalleRoutes = require('./routes/categorias_detalle.routes');
+const cuentasRoutes = require('./routes/cuentas.routes');
 
 const app = express();
 const server = http.createServer(app);
@@ -43,6 +44,7 @@ app.use('/api/movimientos', movimientosRoutes);
 app.use('/api/categorias', categoriasRoutes);
 app.use('/api/detalles', detallesRoutes);
 app.use('/api/categorias-detalle', categoriasDetalleRoutes);
+app.use('/api/cuentas', cuentasRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, mensaje: 'API funcionando correctamente' });

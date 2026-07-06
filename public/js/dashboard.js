@@ -8,6 +8,7 @@ const state = {
   movimientos: [],
   categorias: [],
   categoriasDetalle: [],
+  cuentas: [],
   filtroChecklist: 'todos',
   vista: 'dashboard',
   editandoId: null,
@@ -29,6 +30,7 @@ function init() {
   bindNav();
   bindModal();
   bindModalDetalle();
+  bindModalCuenta();
   bindFiltros();
   bindOrdenChecklist();
   bindLogout();
@@ -96,13 +98,19 @@ function cambiarVista(vista) {
   });
   document.getElementById('view-dashboard').style.display = vista === 'dashboard' ? '' : 'none';
   document.getElementById('view-checklist').style.display = vista === 'checklist' ? '' : 'none';
+  document.getElementById('view-cuentas').style.display = vista === 'cuentas' ? '' : 'none';
 
-  document.getElementById('viewTitle').textContent = vista === 'dashboard' ? 'Dashboard' : 'Checklist de cumplimiento';
-  document.getElementById('viewSubtitle').textContent = vista === 'dashboard'
-    ? 'Resumen financiero del periodo seleccionado'
-    : 'Marca tus movimientos como pagados en tiempo real';
+  const titulos = { dashboard: 'Dashboard', checklist: 'Checklist de cumplimiento', cuentas: 'Cuentas' };
+  const subtitulos = {
+    dashboard: 'Resumen financiero del periodo seleccionado',
+    checklist: 'Marca tus movimientos como pagados en tiempo real',
+    cuentas: 'Saldo de cada cuenta según tus movimientos pagados'
+  };
+  document.getElementById('viewTitle').textContent = titulos[vista];
+  document.getElementById('viewSubtitle').textContent = subtitulos[vista];
 
   if (vista === 'checklist') renderChecklist();
+  if (vista === 'cuentas') renderCuentas();
 }
 
 function bindLogout() {
@@ -140,6 +148,31 @@ async function cargarMovimientos() {
 
   renderRecientes();
   if (state.vista === 'checklist') renderChecklist();
+
+  // El saldo de las cuentas depende de los movimientos del mismo periodo
+  await cargarCuentas();
+}
+
+async function cargarCuentas() {
+  const res = await apiFetch(`/cuentas/saldos?anio=${state.anio}&mes=${state.mes}`);
+  if (res && res.ok) {
+    state.cuentas = res.data;
+    poblarSelectsDeCuenta();
+    if (state.vista === 'cuentas') renderCuentas();
+  }
+}
+
+function poblarSelectsDeCuenta() {
+  const activas = state.cuentas.filter(c => Number(c.activa) === 1);
+  const opciones = activas.map(c => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`).join('');
+
+  const fCuenta = document.getElementById('fCuenta');
+  const fCuentaOrigen = document.getElementById('fCuentaOrigen');
+  const fCuentaDestino = document.getElementById('fCuentaDestino');
+
+  if (fCuenta) fCuenta.innerHTML = `<option value="">Sin cuenta</option>${opciones}`;
+  if (fCuentaOrigen) fCuentaOrigen.innerHTML = opciones;
+  if (fCuentaDestino) fCuentaDestino.innerHTML = opciones;
 }
 
 async function cargarDetalles(movimientoId) {
@@ -213,18 +246,174 @@ function renderRecientes() {
     return;
   }
 
-  cont.innerHTML = recientes.map(m => `
+  cont.innerHTML = recientes.map(m => {
+    const esTransferencia = m.tipo_movimiento === 'transferencia';
+    const etiqueta = esTransferencia
+      ? `${m.cuenta_origen_nombre || '—'} → ${m.cuenta_destino_nombre || '—'}`
+      : `${m.categoria_nombre || 'Sin categoría'} · ${formatoFecha(m.fecha)}`;
+    const signo = esTransferencia ? '' : (m.tipo_movimiento === 'gasto' ? '- ' : '+ ');
+    const colorPunto = esTransferencia ? '#3B4FCB' : (m.categoria_color || '#999');
+
+    return `
     <div class="reciente-row">
       <div class="reciente-info">
-        <span class="reciente-cat-dot" style="background:${m.categoria_color || '#999'}"></span>
+        <span class="reciente-cat-dot" style="background:${colorPunto}"></span>
         <div>
           <div class="reciente-concepto">${escapeHtml(m.concepto)}</div>
-          <div class="reciente-meta">${m.categoria_nombre} · ${formatoFecha(m.fecha)}</div>
+          <div class="reciente-meta">${etiqueta}</div>
         </div>
       </div>
-      <div class="reciente-monto ${m.tipo_movimiento}">${m.tipo_movimiento === 'gasto' ? '-' : '+'} ${formatoMoneda(m.monto)}</div>
+      <div class="reciente-monto ${esTransferencia ? 'transferencia' : m.tipo_movimiento}">${signo}${formatoMoneda(m.monto)}</div>
     </div>
-  `).join('');
+  `;
+  }).join('');
+}
+
+// ---------------- Render y CRUD: Cuentas ----------------
+const ICONOS_CUENTA = {
+  efectivo: '<path d="M2 8h20v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"/><path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v2"/><circle cx="12" cy="13" r="2.2"/>',
+  ahorros: '<path d="M12 2a5 5 0 0 0-5 5v2H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-2V7a5 5 0 0 0-5-5Z"/>',
+  corriente: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/>',
+  tarjeta_credito: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/>',
+  billetera_digital: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M16 12h3"/><path d="M3 10h18"/>',
+  otro: '<circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/>'
+};
+
+const ETIQUETAS_TIPO_CUENTA = {
+  efectivo: 'Efectivo',
+  ahorros: 'Cuenta de ahorros',
+  corriente: 'Cuenta corriente',
+  tarjeta_credito: 'Tarjeta de crédito',
+  billetera_digital: 'Billetera digital',
+  otro: 'Otro'
+};
+
+function renderCuentas() {
+  const cont = document.getElementById('cuentasContainer');
+  if (!cont) return;
+
+  if (state.cuentas.length === 0) {
+    cont.innerHTML = `<div class="card empty-state">Aún no tienes cuentas registradas. Usa "Nueva cuenta" para crear la primera.</div>`;
+    return;
+  }
+
+  cont.innerHTML = state.cuentas.map(c => {
+    const negativo = Number(c.saldo_actual) < 0;
+    return `
+    <div class="cuenta-card card" style="--cuenta-color:${c.color || '#0F766E'}">
+      <div class="cuenta-card-top">
+        <div class="cuenta-icon" style="background:${c.color}1A; color:${c.color}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${ICONOS_CUENTA[c.tipo] || ICONOS_CUENTA.otro}</svg>
+        </div>
+        <div class="cuenta-actions">
+          <button class="btn-icon btn-icon-sm" data-edit-cuenta="${c.id}" title="Editar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
+          </button>
+          <button class="btn-icon btn-icon-sm" data-toggle-activa-cuenta="${c.id}" data-nueva-activa="${Number(c.activa) === 1 ? 0 : 1}" title="${Number(c.activa) === 1 ? 'Desactivar' : 'Activar'}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">${Number(c.activa) === 1 ? '<path d="M18 6 6 18M6 6l12 12"/>' : '<path d="M20 6 9 17l-5-5"/>'}</svg>
+          </button>
+          <button class="btn-icon btn-icon-sm" data-delete-cuenta="${c.id}" title="Eliminar" style="color:var(--danger)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="cuenta-nombre">${escapeHtml(c.nombre)} ${Number(c.activa) === 0 ? '<span class="badge badge-generico">Inactiva</span>' : ''}</div>
+      <div class="cuenta-tipo">${ETIQUETAS_TIPO_CUENTA[c.tipo] || 'Otro'}</div>
+      <div class="cuenta-saldo ${negativo ? 'negativo' : ''}">${formatoMoneda(c.saldo_actual)}</div>
+    </div>`;
+  }).join('');
+
+  cont.querySelectorAll('[data-edit-cuenta]').forEach(el => {
+    el.addEventListener('click', () => abrirModalCuenta(el.dataset.editCuenta));
+  });
+  cont.querySelectorAll('[data-toggle-activa-cuenta]').forEach(el => {
+    el.addEventListener('click', () => cambiarActivaCuenta(el.dataset.toggleActivaCuenta, el.dataset.nuevaActiva === '1'));
+  });
+  cont.querySelectorAll('[data-delete-cuenta]').forEach(el => {
+    el.addEventListener('click', () => eliminarCuenta(el.dataset.deleteCuenta));
+  });
+}
+
+function bindModalCuenta() {
+  document.getElementById('btnNuevaCuenta').addEventListener('click', () => abrirModalCuenta());
+  const overlay = document.getElementById('modalCuentaOverlay');
+  document.getElementById('modalCuentaClose').addEventListener('click', cerrarModalCuenta);
+  document.getElementById('btnCancelarCuenta').addEventListener('click', cerrarModalCuenta);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) cerrarModalCuenta(); });
+  document.getElementById('cuentaForm').addEventListener('submit', guardarCuenta);
+}
+
+function abrirModalCuenta(id = null) {
+  const form = document.getElementById('cuentaForm');
+  form.reset();
+  document.getElementById('cuentaId').value = id || '';
+
+  if (id) {
+    const c = state.cuentas.find(x => String(x.id) === String(id));
+    if (!c) return;
+    document.getElementById('modalCuentaTitle').textContent = 'Editar cuenta';
+    document.getElementById('cNombre').value = c.nombre;
+    document.getElementById('cTipo').value = c.tipo;
+    document.getElementById('cSaldoInicial').value = c.saldo_inicial;
+    document.getElementById('cColor').value = c.color || '#0F766E';
+  } else {
+    document.getElementById('modalCuentaTitle').textContent = 'Nueva cuenta';
+    document.getElementById('cSaldoInicial').value = 0;
+    document.getElementById('cColor').value = '#0F766E';
+  }
+
+  document.getElementById('modalCuentaOverlay').classList.add('show');
+}
+
+function cerrarModalCuenta() {
+  document.getElementById('modalCuentaOverlay').classList.remove('show');
+}
+
+async function guardarCuenta(e) {
+  e.preventDefault();
+  const id = document.getElementById('cuentaId').value;
+
+  const payload = {
+    nombre: document.getElementById('cNombre').value.trim(),
+    tipo: document.getElementById('cTipo').value,
+    saldo_inicial: Number(document.getElementById('cSaldoInicial').value || 0),
+    color: document.getElementById('cColor').value
+  };
+
+  const res = id
+    ? await apiFetch(`/cuentas/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+    : await apiFetch('/cuentas', { method: 'POST', body: JSON.stringify(payload) });
+
+  if (res && res.ok) {
+    mostrarToast(id ? 'Cuenta actualizada' : 'Cuenta creada', 'success');
+    cerrarModalCuenta();
+    await cargarCuentas();
+  } else {
+    mostrarToast(res?.mensaje || 'No se pudo guardar la cuenta', 'error');
+  }
+}
+
+async function cambiarActivaCuenta(id, nuevaActiva) {
+  const res = await apiFetch(`/cuentas/${id}/activa`, {
+    method: 'PATCH',
+    body: JSON.stringify({ activa: nuevaActiva })
+  });
+  if (res && res.ok) {
+    mostrarToast(nuevaActiva ? 'Cuenta activada' : 'Cuenta desactivada', 'success');
+    await cargarCuentas();
+  } else {
+    mostrarToast(res?.mensaje || 'No se pudo actualizar la cuenta', 'error');
+  }
+}
+
+async function eliminarCuenta(id) {
+  const res = await apiFetch(`/cuentas/${id}`, { method: 'DELETE' });
+  if (res && res.ok) {
+    mostrarToast('Cuenta eliminada', 'success');
+    await cargarCuentas();
+  } else {
+    mostrarToast(res?.mensaje || 'No se pudo eliminar la cuenta', 'error');
+  }
 }
 
 // ---------------- Render: Checklist ----------------
@@ -298,6 +487,7 @@ function renderChecklist() {
   if (state.filtroChecklist === 'pagado') lista = lista.filter(m => m.estado === 'pagado');
   if (state.filtroChecklist === 'plan') lista = lista.filter(m => m.tipo_registro === 'plan');
   if (state.filtroChecklist === 'generico') lista = lista.filter(m => m.tipo_registro === 'generico');
+  if (state.filtroChecklist === 'transferencia') lista = lista.filter(m => m.tipo_movimiento === 'transferencia');
 
   if (lista.length === 0) {
     cont.innerHTML = `<div class="card empty-state">No hay movimientos que coincidan con este filtro.</div>`;
@@ -345,15 +535,27 @@ function iconoChevron(abierto) {
 
 function filaChecklistHTML(m) {
   const pagado = m.estado === 'pagado';
+  const esTransferencia = m.tipo_movimiento === 'transferencia';
   const tieneDetalle = Number(m.tiene_detalle) === 1;
   const detalleAbierto = state.detalleAbiertoId === String(m.id);
-  const signo = m.tipo_movimiento === 'gasto' ? '-' : '+';
-  const montoStr = `${signo} ${formatoMoneda(m.monto)}`;
+  const signo = esTransferencia ? '' : (m.tipo_movimiento === 'gasto' ? '- ' : '+ ');
+  const montoStr = `${signo}${formatoMoneda(m.monto)}`;
   const badgeTipo = `<span class="badge ${m.tipo_registro === 'plan' ? 'badge-plan' : 'badge-generico'}">${m.tipo_registro === 'plan' ? 'Plan' : 'Genérico'}</span>`;
   const badgeEstado = `<span class="badge ${pagado ? 'badge-pagado' : 'badge-pendiente'}">${pagado ? 'Pagado' : 'Pendiente'}</span>`;
   const badgeDetalles = tieneDetalle
     ? `<span class="badge badge-generico">${m.detalles_count} detalle${Number(m.detalles_count) === 1 ? '' : 's'}</span>`
     : '';
+  const badgeTransferencia = esTransferencia
+    ? `<span class="badge badge-transferencia">Transferencia</span>` : '';
+
+  // Columna "categoría": para ingreso/gasto es la categoría normal; para
+  // una transferencia se muestra "cuenta origen → cuenta destino".
+  const columnaCategoria = esTransferencia
+    ? `<span class="transferencia-cuentas">${escapeHtml(m.cuenta_origen_nombre || '—')} <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><path d="M5 12h14M13 6l6 6-6 6"/></svg> ${escapeHtml(m.cuenta_destino_nombre || '—')}</span>`
+    : (m.categoria_nombre || 'Sin categoría');
+
+  const chipCuenta = !esTransferencia && m.cuenta_nombre
+    ? `<span class="chip-cuenta">${escapeHtml(m.cuenta_nombre)}</span>` : '';
 
   const checkbox = tieneDetalle
     ? `<div class="mov-checkbox disabled ${pagado ? 'checked' : ''}" title="Estado calculado desde los detalles">
@@ -363,13 +565,18 @@ function filaChecklistHTML(m) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg>
       </div>`;
 
-  const acciones = `
+  // Una transferencia no admite desglose de detalles (no tiene sentido
+  // desglosar un movimiento entre cuentas), así que oculta esos 2 botones.
+  const botonesDetalle = esTransferencia ? '' : `
     <button class="btn-icon" data-add-detalle-id="${m.id}" title="Agregar detalle">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" width="14" height="14"><path d="M12 5v14M5 12h14"/></svg>
     </button>
     <button class="btn-icon" data-toggle-detalle-id="${m.id}" title="Ver desglose">
       ${iconoChevron(detalleAbierto)}
-    </button>
+    </button>`;
+
+  const acciones = `
+    ${botonesDetalle}
     <button class="btn-icon" data-edit-id="${m.id}" title="Editar">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
     </button>
@@ -377,21 +584,26 @@ function filaChecklistHTML(m) {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
     </button>`;
 
+  // Una transferencia no se puede arrastrar (no admite detalles ni puede
+  // convertirse en uno); el resto de movimientos sí.
+  const draggableAttr = esTransferencia ? 'false' : 'true';
+  const tituloDrag = esTransferencia ? '' : 'title="Arrastra este movimiento sobre otro para convertirlo en su detalle"';
+
   return `<div class="mov-row-wrap">
-    <div class="mov-row ${pagado ? 'pagado' : ''}" draggable="true" data-movimiento-id="${m.id}" title="Arrastra este movimiento sobre otro para convertirlo en su detalle">
+    <div class="mov-row ${pagado ? 'pagado' : ''}" draggable="${draggableAttr}" data-movimiento-id="${m.id}" ${tituloDrag}>
 
       <!-- ▸ DESKTOP: columnas horizontales -->
       <div class="mov-desktop">
         ${checkbox}
         <div class="mov-col-concepto">
           <div class="mov-concepto ${pagado ? 'pagado-text' : ''}">${escapeHtml(m.concepto)}</div>
-          <div class="mov-tag-row">${badgeTipo} ${badgeDetalles}</div>
+          <div class="mov-tag-row">${badgeTipo} ${badgeTransferencia} ${badgeDetalles} ${chipCuenta}</div>
         </div>
-        <div class="mov-col-categoria">${m.categoria_nombre}</div>
+        <div class="mov-col-categoria">${columnaCategoria}</div>
         <div class="mov-col-fecha">${formatoFecha(m.fecha)}</div>
         <div class="mov-col-estado">${badgeEstado}</div>
         <div class="mov-col-creado" title="Fecha de creación">${formatoFechaHora(m.creado_en)}</div>
-        <div class="mov-monto ${m.tipo_movimiento}">${montoStr}</div>
+        <div class="mov-monto ${esTransferencia ? 'transferencia' : m.tipo_movimiento}">${montoStr}</div>
         <div class="mov-actions">${acciones}</div>
       </div>
 
@@ -401,9 +613,9 @@ function filaChecklistHTML(m) {
           ${checkbox}
           <div class="movm-concepto-wrap">
             <div class="movm-concepto ${pagado ? 'pagado-text' : ''}">${escapeHtml(m.concepto)}</div>
-            <div class="movm-badges">${badgeTipo} ${badgeEstado} ${badgeDetalles}</div>
+            <div class="movm-badges">${badgeTipo} ${badgeTransferencia} ${badgeEstado} ${badgeDetalles} ${chipCuenta}</div>
           </div>
-          <div class="movm-monto ${m.tipo_movimiento}">${montoStr}</div>
+          <div class="movm-monto ${esTransferencia ? 'transferencia' : m.tipo_movimiento}">${montoStr}</div>
         </div>
         <div class="movm-meta">
           <span class="movm-meta-item">
@@ -411,9 +623,7 @@ function filaChecklistHTML(m) {
             ${formatoFecha(m.fecha)}
           </span>
           <span class="movm-meta-dot">·</span>
-          <span class="movm-meta-item">${m.categoria_nombre}</span>
-          <span class="movm-meta-dot">·</span>
-          <span class="movm-meta-item">${m.tipo_movimiento === 'gasto' ? 'Gasto' : 'Ingreso'}</span>
+          <span class="movm-meta-item">${columnaCategoria}</span>
         </div>
         <div class="movm-creado">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
@@ -614,6 +824,7 @@ function bindModal() {
       if (!btn || btn.disabled) return;
       seg.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
+      if (seg.id === 'segTipoMovimiento') actualizarBloquesPorTipo(btn.dataset.val);
     });
   });
 
@@ -624,6 +835,17 @@ function bindModal() {
     document.getElementById('confirmOverlay').classList.remove('show');
   });
   document.getElementById('btnConfirmarEliminar').addEventListener('click', confirmarEliminar);
+}
+
+// Muestra/oculta categoría+cuenta (ingreso/gasto) vs. cuenta origen/destino
+// (transferencia) según el tipo de movimiento elegido en el formulario.
+function actualizarBloquesPorTipo(tipo) {
+  const esTransferencia = tipo === 'transferencia';
+  document.getElementById('bloqueCategoriaCuenta').style.display = esTransferencia ? 'none' : '';
+  document.getElementById('bloqueTransferencia').style.display = esTransferencia ? '' : 'none';
+  document.getElementById('fCategoria').required = !esTransferencia;
+  document.getElementById('fCuentaOrigen').required = esTransferencia;
+  document.getElementById('fCuentaDestino').required = esTransferencia;
 }
 
 function valorSeg(segId) {
@@ -651,13 +873,17 @@ function abrirModal(id = null) {
     document.getElementById('modalTitle').textContent = 'Editar movimiento';
     document.getElementById('movId').value = m.id;
     document.getElementById('fConcepto').value = m.concepto;
-    document.getElementById('fCategoria').value = m.categoria_id;
+    document.getElementById('fCategoria').value = m.categoria_id || '';
+    document.getElementById('fCuenta').value = m.cuenta_id || '';
+    document.getElementById('fCuentaOrigen').value = m.cuenta_origen_id || '';
+    document.getElementById('fCuentaDestino').value = m.cuenta_destino_id || '';
     document.getElementById('fMonto').value = m.monto;
     document.getElementById('fFecha').value = m.fecha;
     document.getElementById('fDescripcion').value = m.descripcion || '';
     setSeg('segTipoMovimiento', m.tipo_movimiento);
     setSeg('segTipoRegistro', m.tipo_registro);
     setSeg('segEstado', m.estado);
+    actualizarBloquesPorTipo(m.tipo_movimiento);
 
     const tieneDetalle = Number(m.tiene_detalle) === 1;
     montoInput.readOnly = tieneDetalle;
@@ -672,6 +898,7 @@ function abrirModal(id = null) {
     setSeg('segTipoMovimiento', 'gasto');
     setSeg('segTipoRegistro', 'generico');
     setSeg('segEstado', 'pendiente');
+    actualizarBloquesPorTipo('gasto');
 
     montoInput.readOnly = false;
     notaMonto.style.display = 'none';
@@ -691,16 +918,42 @@ function cerrarModal() {
 async function guardarMovimiento(e) {
   e.preventDefault();
 
+  const tipoMovimiento = valorSeg('segTipoMovimiento');
+  const esTransferencia = tipoMovimiento === 'transferencia';
+
   const payload = {
     concepto: document.getElementById('fConcepto').value.trim(),
-    categoria_id: Number(document.getElementById('fCategoria').value),
     monto: Number(document.getElementById('fMonto').value),
     fecha: document.getElementById('fFecha').value,
     descripcion: document.getElementById('fDescripcion').value.trim(),
-    tipo_movimiento: valorSeg('segTipoMovimiento'),
+    tipo_movimiento: tipoMovimiento,
     tipo_registro: valorSeg('segTipoRegistro'),
     estado: valorSeg('segEstado')
   };
+
+  if (esTransferencia) {
+    const cuentaOrigen = document.getElementById('fCuentaOrigen').value;
+    const cuentaDestino = document.getElementById('fCuentaDestino').value;
+    if (!cuentaOrigen || !cuentaDestino) {
+      mostrarToast('Selecciona cuenta origen y cuenta destino', 'error');
+      return;
+    }
+    if (cuentaOrigen === cuentaDestino) {
+      mostrarToast('La cuenta origen y destino no pueden ser la misma', 'error');
+      return;
+    }
+    payload.cuenta_origen_id = Number(cuentaOrigen);
+    payload.cuenta_destino_id = Number(cuentaDestino);
+  } else {
+    const categoriaId = document.getElementById('fCategoria').value;
+    if (!categoriaId) {
+      mostrarToast('Selecciona una categoría', 'error');
+      return;
+    }
+    payload.categoria_id = Number(categoriaId);
+    const cuentaId = document.getElementById('fCuenta').value;
+    if (cuentaId) payload.cuenta_id = Number(cuentaId);
+  }
 
   const id = document.getElementById('movId').value;
   const res = id
