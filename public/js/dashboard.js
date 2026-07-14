@@ -169,10 +169,12 @@ function poblarSelectsDeCuenta() {
   const fCuenta = document.getElementById('fCuenta');
   const fCuentaOrigen = document.getElementById('fCuentaOrigen');
   const fCuentaDestino = document.getElementById('fCuentaDestino');
+  const dCuenta = document.getElementById('dCuenta');
 
   if (fCuenta) fCuenta.innerHTML = `<option value="">Sin cuenta</option>${opciones}`;
   if (fCuentaOrigen) fCuentaOrigen.innerHTML = opciones;
   if (fCuentaDestino) fCuentaDestino.innerHTML = opciones;
+  if (dCuenta) dCuenta.innerHTML = `<option value="">Sin cuenta</option>${opciones}`;
 }
 
 async function cargarDetalles(movimientoId) {
@@ -298,7 +300,13 @@ function renderCuentas() {
   }
 
   cont.innerHTML = state.cuentas.map(c => {
+    const esTarjeta = c.tipo === 'tarjeta_credito';
     const negativo = Number(c.saldo_actual) < 0;
+
+    const seccionSaldo = esTarjeta
+      ? tarjetaCreditoInfoHTML(c)
+      : `<div class="cuenta-saldo ${negativo ? 'negativo' : ''}">${formatoMoneda(c.saldo_actual)}</div>`;
+
     return `
     <div class="cuenta-card card" style="--cuenta-color:${c.color || '#0F766E'}">
       <div class="cuenta-card-top">
@@ -319,7 +327,7 @@ function renderCuentas() {
       </div>
       <div class="cuenta-nombre">${escapeHtml(c.nombre)} ${Number(c.activa) === 0 ? '<span class="badge badge-generico">Inactiva</span>' : ''}</div>
       <div class="cuenta-tipo">${ETIQUETAS_TIPO_CUENTA[c.tipo] || 'Otro'}</div>
-      <div class="cuenta-saldo ${negativo ? 'negativo' : ''}">${formatoMoneda(c.saldo_actual)}</div>
+      ${seccionSaldo}
     </div>`;
   }).join('');
 
@@ -334,6 +342,42 @@ function renderCuentas() {
   });
 }
 
+function tarjetaCreditoInfoHTML(c) {
+  const deuda = Number(c.deuda_actual || 0);
+  const aFavor = Number(c.a_favor || 0);
+
+  // Caso raro: pagaste de más, la tarjeta te queda "a favor".
+  if (deuda === 0 && aFavor > 0) {
+    return `<div class="cuenta-saldo" style="color:var(--success)">A favor: ${formatoMoneda(aFavor)}</div>`;
+  }
+
+  const tieneLimite = c.limite_credito !== null && c.limite_credito !== undefined;
+  const porcentaje = tieneLimite ? Math.min(100, Number(c.porcentaje_uso || 0)) : null;
+  const colorBarra = porcentaje === null ? 'var(--ink-soft)' : (porcentaje >= 90 ? 'var(--danger)' : porcentaje >= 70 ? 'var(--accent)' : 'var(--primary)');
+
+  const barraUso = tieneLimite ? `
+    <div class="tarjeta-barra">
+      <div class="tarjeta-barra-fill" style="width:${porcentaje}%; background:${colorBarra}"></div>
+    </div>
+    <div class="tarjeta-detalle-linea">
+      <span>Disponible: ${formatoMoneda(c.disponible)}</span>
+      <span>Límite: ${formatoMoneda(c.limite_credito)}</span>
+    </div>` : '';
+
+  const fechaPago = c.proxima_fecha_pago
+    ? `<div class="tarjeta-fecha-pago">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        Próximo pago: ${formatoFecha(c.proxima_fecha_pago)}
+      </div>`
+    : '';
+
+  return `
+    <div class="cuenta-saldo negativo">Debes ${formatoMoneda(deuda)}</div>
+    ${barraUso}
+    ${fechaPago}
+  `;
+}
+
 function bindModalCuenta() {
   document.getElementById('btnNuevaCuenta').addEventListener('click', () => abrirModalCuenta());
   const overlay = document.getElementById('modalCuentaOverlay');
@@ -341,6 +385,13 @@ function bindModalCuenta() {
   document.getElementById('btnCancelarCuenta').addEventListener('click', cerrarModalCuenta);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) cerrarModalCuenta(); });
   document.getElementById('cuentaForm').addEventListener('submit', guardarCuenta);
+  document.getElementById('cTipo').addEventListener('change', (e) => actualizarBloqueTarjeta(e.target.value));
+}
+
+function actualizarBloqueTarjeta(tipo) {
+  const esTarjeta = tipo === 'tarjeta_credito';
+  document.getElementById('bloqueTarjetaCredito').style.display = esTarjeta ? '' : 'none';
+  document.getElementById('labelSaldoInicial').textContent = esTarjeta ? 'Deuda inicial (S/)' : 'Saldo inicial (S/)';
 }
 
 function abrirModalCuenta(id = null) {
@@ -356,10 +407,15 @@ function abrirModalCuenta(id = null) {
     document.getElementById('cTipo').value = c.tipo;
     document.getElementById('cSaldoInicial').value = c.saldo_inicial;
     document.getElementById('cColor').value = c.color || '#0F766E';
+    document.getElementById('cLimiteCredito').value = c.limite_credito || '';
+    document.getElementById('cDiaCorte').value = c.dia_corte || '';
+    document.getElementById('cDiaPago').value = c.dia_pago || '';
+    actualizarBloqueTarjeta(c.tipo);
   } else {
     document.getElementById('modalCuentaTitle').textContent = 'Nueva cuenta';
     document.getElementById('cSaldoInicial').value = 0;
     document.getElementById('cColor').value = '#0F766E';
+    actualizarBloqueTarjeta('efectivo');
   }
 
   document.getElementById('modalCuentaOverlay').classList.add('show');
@@ -372,13 +428,24 @@ function cerrarModalCuenta() {
 async function guardarCuenta(e) {
   e.preventDefault();
   const id = document.getElementById('cuentaId').value;
+  const tipo = document.getElementById('cTipo').value;
+  const esTarjeta = tipo === 'tarjeta_credito';
 
   const payload = {
     nombre: document.getElementById('cNombre').value.trim(),
-    tipo: document.getElementById('cTipo').value,
+    tipo,
     saldo_inicial: Number(document.getElementById('cSaldoInicial').value || 0),
     color: document.getElementById('cColor').value
   };
+
+  if (esTarjeta) {
+    const limite = document.getElementById('cLimiteCredito').value;
+    const diaCorte = document.getElementById('cDiaCorte').value;
+    const diaPago = document.getElementById('cDiaPago').value;
+    payload.limite_credito = limite ? Number(limite) : null;
+    payload.dia_corte = diaCorte ? Number(diaCorte) : null;
+    payload.dia_pago = diaPago ? Number(diaPago) : null;
+  }
 
   const res = id
     ? await apiFetch(`/cuentas/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
@@ -668,18 +735,35 @@ function detallePanelHTML(movimientoId) {
 
 function detalleItemHTML(movimientoId, d) {
   const pagado = d.estado === 'pagado';
+  const esIngreso = d.tipo_movimiento === 'ingreso';
+
+  // Badge de tipo: verde para ingreso, rojo para gasto
+  const badgeTipoDetalle = `<span class="badge-tipo-detalle ${esIngreso ? 'ingreso' : 'gasto'}">${esIngreso ? '+ Ingreso' : '− Gasto'}</span>`;
+
+  // Monto con signo según tipo
+  const montoStr = `${esIngreso ? '+' : '−'} ${formatoMoneda(d.monto)}`;
+  const colorMonto = esIngreso ? 'var(--success)' : 'var(--danger)';
+
+  // Chips de categoría y cuenta
   const chipCategoria = d.categoria_detalle_nombre
     ? `<span class="chip-categoria-detalle" style="background:${d.categoria_detalle_color || '#0F766E'}1A; color:${d.categoria_detalle_color || 'var(--primary-dark)'}">${escapeHtml(d.categoria_detalle_nombre)}</span>`
     : '';
+  const chipCuentaDetalle = d.cuenta_nombre
+    ? `<span class="chip-cuenta">${escapeHtml(d.cuenta_nombre)}</span>`
+    : '';
+
   return `<div class="detalle-item ${pagado ? 'pagado' : ''}" draggable="true" data-detalle-id="${d.id}" data-detalle-mov-id="${movimientoId}" title="Arrastra este detalle sobre otro movimiento para moverlo">
     <div class="detalle-check ${pagado ? 'checked' : ''}" data-toggle-detalle="${d.id}" data-toggle-detalle-estado="${pagado ? 'pendiente' : 'pagado'}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg>
     </div>
     <div class="detalle-info">
-      <div class="detalle-concepto ${pagado ? 'pagado-text' : ''}">${escapeHtml(d.concepto)}</div>
-      <div class="detalle-meta">${formatoFecha(d.fecha)}${d.hora ? ' · ' + formatoHora(d.hora) : ''}${chipCategoria}</div>
+      <div class="detalle-concepto-row">
+        ${badgeTipoDetalle}
+        <span class="detalle-concepto ${pagado ? 'pagado-text' : ''}">${escapeHtml(d.concepto)}</span>
+      </div>
+      <div class="detalle-meta">${formatoFecha(d.fecha)}${d.hora ? ' · ' + formatoHora(d.hora) : ''} ${chipCategoria} ${chipCuentaDetalle}</div>
     </div>
-    <div class="detalle-monto">${formatoMoneda(d.monto)}</div>
+    <div class="detalle-monto" style="color:${colorMonto}">${montoStr}</div>
     <div class="detalle-actions">
       <button class="btn-icon btn-icon-sm" data-edit-detalle="${d.id}" data-edit-detalle-mov="${movimientoId}" title="Editar detalle">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>
@@ -1028,15 +1112,21 @@ function abrirModalDetalle(movimientoId, detalleId = null) {
     document.getElementById('dFecha').value = d.fecha;
     document.getElementById('dHora').value = d.hora ? d.hora.slice(0, 5) : '';
     document.getElementById('dCategoriaDetalle').value = d.categoria_detalle_id || '';
+    document.getElementById('dCuenta').value = d.cuenta_id || '';
+    setSeg('segDetalleTipo', d.tipo_movimiento || 'gasto');
     setSeg('segDetalleEstado', d.estado);
   } else {
     document.getElementById('modalDetalleTitle').textContent = 'Nuevo detalle';
-    // La fecha del detalle es SIEMPRE la fecha actual (el momento en que se
-    // registra el gasto real), no la fecha del movimiento cabecera.
     document.getElementById('dFecha').value = new Date().toISOString().slice(0, 10);
     const ahora = new Date();
     document.getElementById('dHora').value = `${String(ahora.getHours()).padStart(2, '0')}:${String(ahora.getMinutes()).padStart(2, '0')}`;
     document.getElementById('dCategoriaDetalle').value = '';
+
+    // Pre-seleccionar la cuenta del movimiento cabecera si tiene una
+    const mov = state.movimientos.find(m => String(m.id) === String(movimientoId));
+    document.getElementById('dCuenta').value = (mov && mov.cuenta_id) ? mov.cuenta_id : '';
+
+    setSeg('segDetalleTipo', 'gasto');
     setSeg('segDetalleEstado', 'pendiente');
   }
 
@@ -1052,14 +1142,17 @@ async function guardarDetalle(e) {
   const movimientoId = document.getElementById('detalleMovimientoId').value;
   const detalleId = document.getElementById('detalleId').value;
   const categoriaDetalleValor = document.getElementById('dCategoriaDetalle').value;
+  const cuentaValor = document.getElementById('dCuenta').value;
 
   const payload = {
     concepto: document.getElementById('dConcepto').value.trim(),
+    tipo_movimiento: valorSeg('segDetalleTipo'),
     monto: Number(document.getElementById('dMonto').value),
     fecha: document.getElementById('dFecha').value,
     hora: document.getElementById('dHora').value || null,
     estado: valorSeg('segDetalleEstado'),
-    categoria_detalle_id: categoriaDetalleValor ? Number(categoriaDetalleValor) : null
+    categoria_detalle_id: categoriaDetalleValor ? Number(categoriaDetalleValor) : null,
+    cuenta_id: cuentaValor ? Number(cuentaValor) : null
   };
 
   const res = detalleId
@@ -1069,7 +1162,7 @@ async function guardarDetalle(e) {
   if (res && res.ok) {
     mostrarToast(detalleId ? 'Detalle actualizado' : 'Detalle agregado', 'success');
     cerrarModalDetalle();
-    state.detalleAbiertoId = movimientoId; // deja el desglose abierto para ver el resultado
+    state.detalleAbiertoId = movimientoId;
     await cargarDetalles(movimientoId);
     renderChecklist();
   } else {

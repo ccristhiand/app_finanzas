@@ -359,8 +359,26 @@
           </select>
         </div>
         <div class="field">
-          <label for="cSaldoInicial">Saldo inicial (S/)</label>
+          <label for="cSaldoInicial" id="labelSaldoInicial">Saldo inicial (S/)</label>
           <input type="number" id="cSaldoInicial" step="0.01" placeholder="0.00" value="0">
+        </div>
+      </div>
+
+      <!-- Solo para tipo = tarjeta_credito -->
+      <div id="bloqueTarjetaCredito" style="display:none;">
+        <div class="field">
+          <label for="cLimiteCredito">Límite de crédito (S/)</label>
+          <input type="number" id="cLimiteCredito" step="0.01" min="0" placeholder="0.00">
+        </div>
+        <div class="form-row">
+          <div class="field">
+            <label for="cDiaCorte">Día de corte</label>
+            <input type="number" id="cDiaCorte" min="1" max="31" placeholder="Ej. 15">
+          </div>
+          <div class="field">
+            <label for="cDiaPago">Día de pago</label>
+            <input type="number" id="cDiaPago" min="1" max="31" placeholder="Ej. 28">
+          </div>
         </div>
       </div>
 
@@ -491,16 +509,39 @@
       <input type="hidden" id="detalleId">
       <input type="hidden" id="detalleMovimientoId">
 
+      <!-- Tipo: ingreso o gasto a nivel del detalle individual -->
+      <div class="field">
+        <label>Tipo del detalle</label>
+        <div class="seg-control" id="segDetalleTipo">
+          <button type="button" class="seg-btn active" data-val="gasto">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="13" height="13"><path d="M12 5v14M5 12h14"/><circle cx="12" cy="12" r="9" opacity=".2" fill="currentColor" stroke="none"/></svg>
+            Gasto
+          </button>
+          <button type="button" class="seg-btn" data-val="ingreso">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="13" height="13"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            Ingreso
+          </button>
+        </div>
+      </div>
+
       <div class="field">
         <label for="dConcepto">Concepto</label>
         <input type="text" id="dConcepto" placeholder="Ej. Bus ida" required>
       </div>
 
-      <div class="field">
-        <label for="dCategoriaDetalle">Categoría del detalle</label>
-        <select id="dCategoriaDetalle">
-          <option value="">Sin categoría</option>
-        </select>
+      <div class="form-row">
+        <div class="field">
+          <label for="dCategoriaDetalle">Categoría</label>
+          <select id="dCategoriaDetalle">
+            <option value="">Sin categoría</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="dCuenta">Cuenta</label>
+          <select id="dCuenta">
+            <option value="">Sin cuenta</option>
+          </select>
+        </div>
       </div>
 
       <div class="form-row">

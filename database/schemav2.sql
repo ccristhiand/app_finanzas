@@ -156,6 +156,68 @@ WHERE m.tipo_movimiento IN ('ingreso', 'gasto')
 -- El nuevo endpoint GET /api/cuentas/saldos hace ese cálculo.
 
 
+-- =========================================================
+-- MIGRACIÓN v4: Tarjetas de crédito (límite + fechas de corte/pago)
+-- =========================================================
+ 
+ALTER TABLE cuentas
+  ADD COLUMN limite_credito DECIMAL(12,2) NULL AFTER saldo_inicial,
+  ADD COLUMN dia_corte TINYINT NULL AFTER limite_credito,
+  ADD COLUMN dia_pago TINYINT NULL AFTER dia_corte,
+  ADD CONSTRAINT chk_dia_corte CHECK (dia_corte IS NULL OR (dia_corte BETWEEN 1 AND 31)),
+  ADD CONSTRAINT chk_dia_pago CHECK (dia_pago IS NULL OR (dia_pago BETWEEN 1 AND 31));
+ 
+-- Notas de diseño:
+-- - Estos 3 campos solo tienen sentido para cuentas tipo 'tarjeta_credito',
+--   pero se dejan NULL-able porque una cuenta de efectivo/ahorros no los usa.
+-- - El saldo de una tarjeta se sigue calculando IGUAL que las demás cuentas
+--   (saldo_inicial + gastos/ingresos/transferencias pagadas). Un gasto con
+--   cuenta_id = tarjeta hace que el saldo baje (se vuelve negativo = deuda).
+--   Pagar la tarjeta es una TRANSFERENCIA normal con cuenta_destino = tarjeta
+--   (no se necesita ningún tipo de movimiento nuevo).
+-- - "Disponible" y "% usado" se calculan en el backend a partir de
+--   limite_credito y el saldo actual, no se guardan como columna.
+
+
+
+-- =========================================================
+-- MIGRACIÓN v5: tipo_movimiento y cuenta_id en movimiento_detalles
+-- =========================================================
+ 
+-- 1) Tipo de movimiento por detalle (ingreso o gasto).
+--    DEFAULT 'gasto' para que los detalles ya existentes
+--    mantengan el comportamiento anterior sin cambios.
+ALTER TABLE movimiento_detalles
+  ADD COLUMN tipo_movimiento ENUM('ingreso','gasto') NOT NULL DEFAULT 'gasto' AFTER concepto;
+ 
+-- 2) Cuenta asociada al detalle.
+--    NULL-able: los detalles existentes no tienen cuenta asignada
+--    (siguen heredando la cuenta de la cabecera del movimiento).
+ALTER TABLE movimiento_detalles
+  ADD COLUMN cuenta_id INT NULL AFTER categoria_detalle_id,
+  ADD CONSTRAINT fk_detalle_cuenta FOREIGN KEY (cuenta_id)
+    REFERENCES cuentas(id) ON DELETE SET NULL;
+ 
+-- 3) Backfill retrocompatible: los detalles ya cargados toman
+--    la cuenta del movimiento cabecera al que pertenecen,
+--    solo si la cabecera tiene cuenta_id asignada.
+UPDATE movimiento_detalles d
+JOIN movimientos m ON m.id = d.movimiento_id
+SET d.cuenta_id = m.cuenta_id
+WHERE m.cuenta_id IS NOT NULL
+  AND d.cuenta_id IS NULL;
+ 
+-- Nota: el tipo_movimiento queda como 'gasto' (el DEFAULT) para
+-- todos los detalles existentes, que es correcto para la mayoría
+-- (pasajes, gastos hormiga, servicios). Solo los detalles de
+-- movimientos de ingreso con desglose se actualizarán al editar.
+ 
+
+
+
+
+
+
 
 
 

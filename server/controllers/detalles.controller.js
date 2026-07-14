@@ -6,6 +6,7 @@ function getIO(req) {
   return req.app.get('io');
 }
 
+// Devuelve el movimiento si pertenece al usuario, null si no
 async function verificarPropiedadMovimiento(movimiento_id, usuario_id) {
   const [rows] = await pool.query(
     'SELECT id, tipo_movimiento FROM movimientos WHERE id = ? AND usuario_id = ?',
@@ -26,21 +27,29 @@ async function obtenerDetalleDelUsuario(detalle_id, usuario_id) {
   return rows[0];
 }
 
+// Query reutilizable para obtener un detalle con todos sus JOINs
+const SELECT_DETALLE_COMPLETO = `
+  SELECT d.*,
+    cd.nombre AS categoria_detalle_nombre, cd.color AS categoria_detalle_color,
+    cu.nombre AS cuenta_nombre, cu.color AS cuenta_color, cu.tipo AS cuenta_tipo
+  FROM movimiento_detalles d
+  LEFT JOIN categorias_detalle cd ON cd.id = d.categoria_detalle_id
+  LEFT JOIN cuentas cu ON cu.id = d.cuenta_id
+`;
+
 // GET /api/detalles/movimiento/:movimientoId
 async function listarPorMovimiento(req, res) {
   try {
     const { movimientoId } = req.params;
     const usuario_id = req.usuario.id;
 
-    const esDelUsuario = await verificarPropiedadMovimiento(movimientoId, usuario_id);
-    if (!esDelUsuario) {
+    const movimiento = await verificarPropiedadMovimiento(movimientoId, usuario_id);
+    if (!movimiento) {
       return res.status(404).json({ ok: false, mensaje: 'Movimiento no encontrado' });
     }
 
     const [rows] = await pool.query(
-      `SELECT d.*, cd.nombre AS categoria_detalle_nombre, cd.color AS categoria_detalle_color
-       FROM movimiento_detalles d
-       LEFT JOIN categorias_detalle cd ON cd.id = d.categoria_detalle_id
+      `${SELECT_DETALLE_COMPLETO}
        WHERE d.movimiento_id = ?
        ORDER BY d.fecha ASC, d.hora ASC, d.id ASC`,
       [movimientoId]
@@ -57,7 +66,10 @@ async function crear(req, res) {
   try {
     const { movimientoId } = req.params;
     const usuario_id = req.usuario.id;
-    const { concepto, monto, fecha, hora, estado, categoria_detalle_id } = req.body;
+    const {
+      concepto, tipo_movimiento, monto, fecha, hora,
+      estado, categoria_detalle_id, cuenta_id
+    } = req.body;
 
     if (!concepto || monto === undefined || monto === null || monto === '' || !fecha) {
       return res.status(400).json({ ok: false, mensaje: 'Faltan campos obligatorios' });
@@ -71,18 +83,23 @@ async function crear(req, res) {
       return res.status(400).json({ ok: false, mensaje: 'Las transferencias no admiten detalles' });
     }
 
+    // El tipo del detalle hereda del movimiento padre si no se especifica
+    const tipoDetalle = ['ingreso', 'gasto'].includes(tipo_movimiento)
+      ? tipo_movimiento
+      : movimiento.tipo_movimiento;
+
     const [result] = await pool.query(
-      `INSERT INTO movimiento_detalles (movimiento_id, concepto, monto, fecha, hora, estado, categoria_detalle_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [movimientoId, concepto, monto, fecha, hora || null, estado || 'pendiente', categoria_detalle_id || null]
+      `INSERT INTO movimiento_detalles
+        (movimiento_id, concepto, tipo_movimiento, monto, fecha, hora, estado, categoria_detalle_id, cuenta_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        movimientoId, concepto, tipoDetalle, monto,
+        fecha, hora || null, estado || 'pendiente',
+        categoria_detalle_id || null, cuenta_id || null
+      ]
     );
 
-    const [rows] = await pool.query(
-      `SELECT d.*, cd.nombre AS categoria_detalle_nombre, cd.color AS categoria_detalle_color
-       FROM movimiento_detalles d LEFT JOIN categorias_detalle cd ON cd.id = d.categoria_detalle_id
-       WHERE d.id = ?`,
-      [result.insertId]
-    );
+    const [rows] = await pool.query(`${SELECT_DETALLE_COMPLETO} WHERE d.id = ?`, [result.insertId]);
     const nuevoDetalle = rows[0];
 
     const movimientoActualizado = await recalcularMovimiento(movimientoId, usuario_id, getIO(req));
@@ -103,29 +120,35 @@ async function actualizar(req, res) {
   try {
     const { id } = req.params;
     const usuario_id = req.usuario.id;
-    const { concepto, monto, fecha, hora, estado, categoria_detalle_id } = req.body;
+    const {
+      concepto, tipo_movimiento, monto, fecha, hora,
+      estado, categoria_detalle_id, cuenta_id
+    } = req.body;
 
     const detalleActual = await obtenerDetalleDelUsuario(id, usuario_id);
     if (!detalleActual) {
       return res.status(404).json({ ok: false, mensaje: 'Detalle no encontrado' });
     }
-
     if (!concepto || monto === undefined || monto === null || monto === '' || !fecha) {
       return res.status(400).json({ ok: false, mensaje: 'Faltan campos obligatorios' });
     }
 
+    const tipoDetalle = ['ingreso', 'gasto'].includes(tipo_movimiento)
+      ? tipo_movimiento
+      : detalleActual.tipo_movimiento;
+
     await pool.query(
-      `UPDATE movimiento_detalles SET concepto = ?, monto = ?, fecha = ?, hora = ?, estado = ?, categoria_detalle_id = ?
+      `UPDATE movimiento_detalles
+       SET concepto = ?, tipo_movimiento = ?, monto = ?, fecha = ?, hora = ?,
+           estado = ?, categoria_detalle_id = ?, cuenta_id = ?
        WHERE id = ?`,
-      [concepto, monto, fecha, hora || null, estado || 'pendiente', categoria_detalle_id || null, id]
+      [
+        concepto, tipoDetalle, monto, fecha, hora || null,
+        estado || 'pendiente', categoria_detalle_id || null, cuenta_id || null, id
+      ]
     );
 
-    const [rows] = await pool.query(
-      `SELECT d.*, cd.nombre AS categoria_detalle_nombre, cd.color AS categoria_detalle_color
-       FROM movimiento_detalles d LEFT JOIN categorias_detalle cd ON cd.id = d.categoria_detalle_id
-       WHERE d.id = ?`,
-      [id]
-    );
+    const [rows] = await pool.query(`${SELECT_DETALLE_COMPLETO} WHERE d.id = ?`, [id]);
     const detalleActualizado = rows[0];
 
     const movimientoActualizado = await recalcularMovimiento(
@@ -161,12 +184,7 @@ async function cambiarEstado(req, res) {
 
     await pool.query('UPDATE movimiento_detalles SET estado = ? WHERE id = ?', [estado, id]);
 
-    const [rows] = await pool.query(
-      `SELECT d.*, cd.nombre AS categoria_detalle_nombre, cd.color AS categoria_detalle_color
-       FROM movimiento_detalles d LEFT JOIN categorias_detalle cd ON cd.id = d.categoria_detalle_id
-       WHERE d.id = ?`,
-      [id]
-    );
+    const [rows] = await pool.query(`${SELECT_DETALLE_COMPLETO} WHERE d.id = ?`, [id]);
     const detalleActualizado = rows[0];
 
     const movimientoActualizado = await recalcularMovimiento(
@@ -185,7 +203,6 @@ async function cambiarEstado(req, res) {
 }
 
 // PATCH /api/detalles/:id/mover  { movimiento_id: <destinoId> }
-// Mueve un detalle de un movimiento a otro (drag & drop desde el checklist).
 async function mover(req, res) {
   try {
     const { id } = req.params;
@@ -208,7 +225,6 @@ async function mover(req, res) {
     if (destinoInfo.tipo_movimiento === 'transferencia') {
       return res.status(400).json({ ok: false, mensaje: 'Las transferencias no admiten detalles' });
     }
-
     if (String(detalleActual.movimiento_id) === String(nuevoMovimientoId)) {
       return res.status(400).json({ ok: false, mensaje: 'El detalle ya pertenece a ese movimiento' });
     }
@@ -221,12 +237,7 @@ async function mover(req, res) {
       recalcularMovimiento(nuevoMovimientoId, usuario_id, getIO(req))
     ]);
 
-    const [rows] = await pool.query(
-      `SELECT d.*, cd.nombre AS categoria_detalle_nombre, cd.color AS categoria_detalle_color
-       FROM movimiento_detalles d LEFT JOIN categorias_detalle cd ON cd.id = d.categoria_detalle_id
-       WHERE d.id = ?`,
-      [id]
-    );
+    const [rows] = await pool.query(`${SELECT_DETALLE_COMPLETO} WHERE d.id = ?`, [id]);
     const detalleActualizado = rows[0];
 
     getIO(req).to(`usuario_${usuario_id}`).emit('detalle:movido', {
@@ -237,12 +248,7 @@ async function mover(req, res) {
       movimientoDestino
     });
 
-    return res.json({
-      ok: true,
-      data: detalleActualizado,
-      movimientoOrigen,
-      movimientoDestino
-    });
+    return res.json({ ok: true, data: detalleActualizado, movimientoOrigen, movimientoDestino });
   } catch (error) {
     console.error('Error al mover detalle:', error);
     return res.status(500).json({ ok: false, mensaje: 'Error interno del servidor' });

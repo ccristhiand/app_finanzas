@@ -634,3 +634,35 @@ body { background: var(--bg); }
 @media (max-width: 420px) {
   .cuentas-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Tarjeta de crédito: barra de uso y fecha de pago ── */
+.tarjeta-barra {
+  width: 100%; height: 6px; border-radius: 100px;
+  background: #EEF1F0; overflow: hidden; margin-top: 10px;
+}
+.tarjeta-barra-fill { height: 100%; border-radius: 100px; transition: width 0.3s ease; }
+
+.tarjeta-detalle-linea {
+  display: flex; justify-content: space-between;
+  font-size: 11.5px; color: var(--ink-soft); margin-top: 6px;
+}
+
+.tarjeta-fecha-pago {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--ink-soft); margin-top: 10px;
+  padding-top: 10px; border-top: 1px dashed var(--border);
+}
+
+/* ── Badge de tipo en el ítem de detalle (ingreso/gasto) ── */
+.detalle-concepto-row {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+
+.badge-tipo-detalle {
+  display: inline-flex; align-items: center;
+  padding: 1px 7px; border-radius: 100px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
+  white-space: nowrap; flex-shrink: 0;
+}
+.badge-tipo-detalle.ingreso { background: var(--success-soft); color: var(--success); }
+.badge-tipo-detalle.gasto   { background: var(--danger-soft);  color: var(--danger);  }
