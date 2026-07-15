@@ -382,10 +382,22 @@ async function resumenDashboard(req, res) {
       ? Number(((montoCumplidoPeriodo / montoTotalPeriodo) * 100).toFixed(2))
       : 0;
 
+    // Efectivo acumulado con lógica de flujo real de caja:
+    //   - Gasto con cuenta NO-TC     → resta inmediatamente (el cash sale al comprar)
+    //   - Gasto con cuenta TC        → NO resta (el cash aún está en tu banco)
+    //   - Transferencia banco → TC   → resta (es cuando el cash realmente sale)
+    //   - Transferencia entre no-TC  → neutral (el dinero solo cambia de bolsillo)
+    //   - Ingreso                    → suma siempre
     const [acumRows] = await pool.query(
-      `SELECT m.tipo_movimiento, m.monto, c.tipo AS categoria_tipo
+      `SELECT m.tipo_movimiento, m.monto, c.tipo AS categoria_tipo,
+              cu.tipo AS cuenta_tipo,
+              co.tipo AS cuenta_origen_tipo,
+              cd.tipo AS cuenta_destino_tipo
        FROM movimientos m
-       LEFT JOIN categorias c ON c.id = m.categoria_id
+       LEFT JOIN categorias c   ON c.id  = m.categoria_id
+       LEFT JOIN cuentas cu     ON cu.id = m.cuenta_id
+       LEFT JOIN cuentas co     ON co.id = m.cuenta_origen_id
+       LEFT JOIN cuentas cd     ON cd.id = m.cuenta_destino_id
        WHERE m.usuario_id = ? AND ((m.anio < ?) OR (m.anio = ? AND m.mes <= ?))`,
       [usuario_id, anio, anio, mes]
     );
@@ -395,12 +407,42 @@ async function resumenDashboard(req, res) {
 
     for (const r of acumRows) {
       const monto = parseFloat(r.monto);
-      // Las transferencias no afectan el efectivo acumulado total (solo
-      // mueven dinero entre cuentas propias, no lo hacen entrar ni salir).
-      if (r.tipo_movimiento === 'transferencia') continue;
-      efectivoAcumulado += r.tipo_movimiento === 'ingreso' ? monto : -monto;
-      if (acumPorTipo[r.categoria_tipo] !== undefined) {
-        acumPorTipo[r.categoria_tipo] += monto;
+
+      if (r.tipo_movimiento === 'ingreso') {
+        efectivoAcumulado += monto;
+        // Los ingresos a TC (cashback, devoluciones) se ignoran en el
+        // efectivo acumulado porque no llegaron a tu cuenta bancaria.
+        if (r.cuenta_tipo !== 'tarjeta_credito') {
+          if (acumPorTipo[r.categoria_tipo] !== undefined) {
+            acumPorTipo[r.categoria_tipo] += monto;
+          }
+        }
+
+      } else if (r.tipo_movimiento === 'gasto') {
+        const esTc = r.cuenta_tipo === 'tarjeta_credito';
+        if (!esTc) {
+          // Gasto con efectivo/débito/ahorros: el cash sale en el acto
+          efectivoAcumulado -= monto;
+          if (acumPorTipo[r.categoria_tipo] !== undefined) {
+            acumPorTipo[r.categoria_tipo] += monto;
+          }
+        }
+        // Gasto con TC: no se contabiliza aquí; se contabilizará cuando
+        // el usuario haga la transferencia de pago (ver bloque siguiente).
+
+      } else if (r.tipo_movimiento === 'transferencia') {
+        const origenEsTc  = r.cuenta_origen_tipo  === 'tarjeta_credito';
+        const destinoEsTc = r.cuenta_destino_tipo === 'tarjeta_credito';
+
+        if (destinoEsTc && !origenEsTc) {
+          // Pago de TC desde cuenta bancaria: AQUÍ sale el cash de verdad.
+          efectivoAcumulado -= monto;
+        }
+        // Transferencia TC→banco (devolución de saldo a favor): suma.
+        if (origenEsTc && !destinoEsTc) {
+          efectivoAcumulado += monto;
+        }
+        // Banco→banco: neutral (dinero que cambia de bolsillo, no sale).
       }
     }
 
